@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stop!</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>STOP!</h1>
+    <p class="subtitulo">Adedanha · Adedonha</p>
+  </header>
+
+  <main>
+    <!-- Tela de entrada: nome + criar/entrar sala -->
+    <div id="tela-nome" class="tela ativa">
+      <div class="card-intro">
+        <h2 class="titulo-lobby">Stop! Multiplayer</h2>
+        <p class="subtitulo-lobby">Jogue com seus amigos em tempo real</p>
+
+        <div class="campo-form">
+          <label for="input-nome">Seu nome</label>
+          <input type="text" id="input-nome" placeholder="Como você quer ser chamado?" maxlength="20" autocomplete="off">
+        </div>
+
+        <button type="button" id="btn-criar-sala" onclick="criarSala()">🏠 Criar Nova Sala</button>
+
+        <div class="divisor-ou"><span>ou entre em uma sala</span></div>
+
+        <div class="entrar-pin-area">
+          <input type="text" id="input-pin" placeholder="PIN da sala (ex: 4821)" maxlength="4" inputmode="numeric">
+          <button type="button" id="btn-entrar-sala" onclick="entrarSalaPIN()">Entrar →</button>
+        </div>
+
+        <p id="erro-sala" class="erro-sala-msg"></p>
+      </div>
+    </div>
+
+    <!-- Tela de sala (lobby de espera) -->
+    <div id="tela-sala" class="tela">
+
+      <!-- Header: contador + PIN -->
+      <div class="lobby-topo">
+        <div class="lobby-info-box">
+          <span class="label-topo">👥 JOGADORES</span>
+          <span id="lobby-count" class="lobby-count-num">1/10</span>
+        </div>
+        <div class="lobby-info-box lobby-pin-box">
+          <span class="label-topo">PIN DA SALA</span>
+          <span id="lobby-pin" class="lobby-pin-num">----</span>
+          <span class="lobby-pin-hint">Compartilhe com seus amigos</span>
+        </div>
+      </div>
+
+      <!-- Body: config (esq) + jogadores/chat (dir) -->
+      <div class="lobby-body">
+
+        <!-- Coluna esquerda: configurações do jogo -->
+        <div class="lobby-config">
+
+          <!-- Painel: Categorias -->
+          <div class="painel-setup">
+            <div class="painel-header">
+              <span class="painel-titulo">📋 CATEGORIAS <span id="cat-count" class="painel-count">(0)</span></span>
+              <div class="painel-acoes" id="painel-cat-acoes">
+                <button type="button" class="btn-painel" onclick="resetarCategorias()" title="Restaurar padrões">↺</button>
+                <button type="button" class="btn-painel" onclick="limparCategorias()" title="Limpar tudo">🗑️</button>
+              </div>
+            </div>
+            <div id="cat-estado-vazio" class="cat-estado-vazio">
+              <span class="cat-vazio-icone">✏️</span>
+              <p>Adicione pelo menos 2 categorias para jogar</p>
+            </div>
+            <div id="lista-categorias-setup" class="chips-lista"></div>
+            <div class="adicionar-cat" id="adicionar-cat-area">
+              <input type="text" id="nova-categoria" placeholder="Categoria..." maxlength="30">
+              <button type="button" id="btn-add-cat" onclick="adicionarCategoria()">+ ADD</button>
+            </div>
+          </div>
+
+          <!-- Painel: Letras -->
+          <div class="painel-setup">
+            <div class="painel-header">
+              <span class="painel-titulo">🔤 LETRAS <span id="letras-count" class="painel-count">(26)</span></span>
+            </div>
+            <div id="letras-grid" class="letras-grid"></div>
+          </div>
+
+          <!-- Painel: Rodadas -->
+          <div class="painel-setup">
+            <div class="painel-header">
+              <span class="painel-titulo">🔄 RODADAS</span>
+            </div>
+            <div class="select-wrapper" id="rodadas-host">
+              <select id="select-rodadas" onchange="totalRodadas = parseInt(this.value); emitirConfigSeModoOnline()">
+                <option value="4">4 Rodadas</option>
+                <option value="5">5 Rodadas</option>
+                <option value="6">6 Rodadas</option>
+                <option value="7">7 Rodadas</option>
+                <option value="8" selected>8 Rodadas</option>
+                <option value="9">9 Rodadas</option>
+                <option value="10">10 Rodadas</option>
+              </select>
+              <span class="select-arrow">▼</span>
+            </div>
+            <div id="rodadas-display" class="rodadas-display" style="display:none">8 Rodadas</div>
+          </div>
+
+        </div>
+
+        <!-- Coluna direita: lista de jogadores + chat -->
+        <div class="lobby-direita">
+          <div id="lobby-lista" class="lobby-lista"></div>
+          <div class="chat-box">
+            <div class="chat-header">💬 Chat da Sala</div>
+            <div id="chat-lista" class="chat-lista"></div>
+            <div class="chat-input-area">
+              <input type="text" id="chat-input" placeholder="Mensagem..." maxlength="100"
+                     onkeydown="if(event.key==='Enter') enviarChat()">
+              <button type="button" onclick="enviarChat()">→</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Footer: aguardando / iniciar -->
+      <div class="lobby-footer">
+        <p id="lobby-aguardando" class="lobby-aguardando">Aguardando o host iniciar o jogo...</p>
+        <button id="btn-iniciar-online" onclick="iniciarJogoOnline()" style="display:none">▶ INICIAR JOGO</button>
+      </div>
+    </div>
+
+    <!-- Tela inicial (sem uso no fluxo multiplayer) -->
+    <div id="tela-inicio" class="tela"></div>
+
+    <!-- Tela de jogo -->
+    <div id="tela-jogo" class="tela">
+      <div class="header-jogo">
+        <div class="letra-container">
+          <span class="label-topo">LETRA</span>
+          <span id="letra-display">?</span>
+        </div>
+        <div class="timer-container">
+          <span class="label-topo">TEMPO</span>
+          <span id="timer">60</span>
+        </div>
+      </div>
+
+      <div class="categorias" id="categorias-jogo"></div>
+
+      <button id="btn-stop" onclick="pararJogo()">STOP!</button>
+    </div>
+
+    <!-- Tela de verificação -->
+    <div id="tela-verificacao" class="tela">
+      <div class="ver-header">
+        <h2>Verificar Respostas</h2>
+        <p>Letra sorteada: <strong id="ver-letra"></strong></p>
+      </div>
+      <div id="ver-lista"></div>
+      <button onclick="confirmarVerificacao()">Confirmar Pontuação →</button>
+    </div>
+
+    <!-- Tela de resultado -->
+    <div id="tela-resultado" class="tela">
+      <h2>Resultado da Rodada</h2>
+      <p id="letra-usada"></p>
+      <ul id="resultado-lista"></ul>
+      <div id="pontuacao-total"></div>
+      <div id="info-rodada" class="info-rodada"></div>
+      <button id="btn-proximo" onclick="proximaRodadaOuFim()">→ Próxima Rodada</button>
+    </div>
+
+    <!-- Tela de resultado final -->
+    <div id="tela-final" class="tela">
+      <h2>🏆 Resultado Final</h2>
+      <ul id="final-historico" class="final-historico"></ul>
+      <div id="final-total" class="final-total"></div>
+      <button onclick="reiniciar()">🔄 Jogar Novamente</button>
+    </div>
+  </main>
+
+  <footer>
+    <p>Projeto acadêmico facultativo &middot; Inspirado em <a href="https://stopots.com/pt" target="_blank" rel="noopener">StopotS (stopots.com)</a> &middot; Sem fins comerciais</p>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="javascript.js"></script>
+</body>
+</html>
