@@ -1,6 +1,5 @@
 const LETRAS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-// ── Multiplayer ──────────────────────────────────────────────────────
 const socket = io();
 let meuNome  = "";
 let meuPin   = "";
@@ -54,7 +53,6 @@ socket.on('erroEntrada', (msg) => {
     setTimeout(() => { el.textContent = ''; }, 3500);
 });
 
-// Configurações sincronizadas pelo host
 socket.on('configAtualizada', ({ categorias, letras, rodadas }) => {
     categoriasAtivas = categorias;
     letrasAtivas     = new Set(letras);
@@ -94,7 +92,11 @@ function adicionarMensagemChat(nome, msg) {
     if (!lista) return;
     const div = document.createElement('div');
     div.className = 'chat-msg';
-    div.innerHTML = `<span class="chat-nome">${nome}:</span> ${msg}`;
+    const nomeSpan = document.createElement('span');
+    nomeSpan.className = 'chat-nome';
+    nomeSpan.textContent = nome + ':';
+    div.appendChild(nomeSpan);
+    div.appendChild(document.createTextNode(' ' + msg));
     lista.appendChild(div);
     lista.scrollTop = lista.scrollHeight;
 }
@@ -178,8 +180,8 @@ const CATEGORIAS_PADRAO = [
 const TEMPO_TOTAL = 60;
 const PONTOS = { valido: 10, repetido: 5, invalido: 0 };
 
-let categoriasAtivas   = [];                     // começa vazio — ↺ restaura padrões
-let letrasAtivas       = new Set([...LETRAS]);   // todas as 26 letras ativas
+let categoriasAtivas   = [];
+let letrasAtivas       = new Set([...LETRAS]);
 let totalRodadas       = 8;
 let rodadaAtual        = 0;
 let pontuacaoAcumulada = 0;
@@ -191,8 +193,6 @@ let tempoRestante = TEMPO_TOTAL;
 let jogoAtivo     = false;
 let votos         = {};
 let respostasJogo = {};
-
-// ── Setup de categorias ──────────────────────────────────────────────
 
 function renderCategoriasSetup() {
     const container   = document.getElementById("lista-categorias-setup");
@@ -232,8 +232,6 @@ function limparCategorias() {
     renderCategoriasSetup();
     emitirConfigSeModoOnline();
 }
-
-// ── Setup de letras ─────────────────────────────────────────────────────
 
 function renderLetrasSetup() {
     const grid  = document.getElementById("letras-grid");
@@ -283,8 +281,6 @@ function removerCategoria(id) {
     renderCategoriasSetup();
     emitirConfigSeModoOnline();
 }
-
-// ── Jogo ─────────────────────────────────────────────────────────────
 
 function renderCategoriasJogo() {
     const container = document.getElementById("categorias-jogo");
@@ -350,8 +346,6 @@ function pararJogo() {
     iniciarVerificacao();
 }
 
-// ── Verificação de palavras ───────────────────────────────────────────
-
 function iniciarVerificacao() {
     document.getElementById("ver-letra").textContent = letraAtual;
     const lista = document.getElementById("ver-lista");
@@ -361,7 +355,6 @@ function iniciarVerificacao() {
         const valor       = respostasJogo[c.id] || "";
         const começaCerto = valor.length > 0 && valor.toUpperCase().startsWith(letraAtual);
 
-        // Pré-classificação automática
         votos[c.id] = (valor === "" || !começaCerto) ? "invalido" : "valido";
 
         const card = document.createElement("div");
@@ -413,15 +406,19 @@ function confirmarVerificacao() {
     });
 
     const max = categoriasAtivas.length * 10;
+
+    pontuacaoAcumulada += pontuacao;
+    historicoRodadas.push({ rodada: rodadaAtual, letra: letraAtual, pontuacao });
+
     document.getElementById("letra-usada").textContent = `Letra da rodada: ${letraAtual}`;
     document.getElementById("resultado-lista").innerHTML = html;
     document.getElementById("pontuacao-total").innerHTML =
-        `Pontuação total: <strong>${pontuacao}</strong> / ${max}`;
+        `Pontuação desta rodada: <strong>${pontuacao}</strong> / ${max}`;
+    document.getElementById("info-rodada").textContent =
+        `Rodada ${rodadaAtual} de ${totalRodadas} · Total acumulado: ${pontuacaoAcumulada} pts`;
 
     mostrarTela("tela-resultado");
 }
-
-// ── Rodadas ──────────────────────────────────────────────────────
 
 function proximaRodadaOuFim() {
     if (meuPin) { reiniciar(); return; }
@@ -445,8 +442,6 @@ function mostrarResultadoFinal() {
         `Pontuação Final: <strong>${pontuacaoAcumulada}</strong> / ${max} pts`;
     mostrarTela("tela-final");
 }
-
-// ── Utilitários ───────────────────────────────────────────────────────
 
 function reiniciar() {
     rodadaAtual        = 0;
