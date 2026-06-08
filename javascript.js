@@ -800,9 +800,9 @@ socket.on('iniciarVerificacao', (payload) => {
     mostrarTela('tela-verificacao');
 });
 
-socket.on('votacaoIniciada', ({ item, duracao, totalJogadores }) => {
-    estadoServidor.votacaoAtual = { item, duracao, totalJogadores, votos: {} };
-    mostrarPainelVotacao(item, duracao, totalJogadores);
+socket.on('votacaoIniciada', ({ item, duracao, totalJogadores, startedAt, endsAt }) => {
+    estadoServidor.votacaoAtual = { item, duracao, totalJogadores, votos: {}, startedAt, endsAt };
+    mostrarPainelVotacao(item, duracao, totalJogadores, endsAt);
 });
 
 socket.on('votacaoAtualizada', ({ itemId, votos, totalJogadores }) => {
@@ -994,7 +994,6 @@ function renderCategoriaVerificacao() {
             <div class="ver-chip-wrapper${ativo ? ' ativo' : ''}">
                 <span class="resposta-chip ${r.aceito ? 'aceito' : 'negado'}">${escaparHtml(r.texto)}</span>
                 <span class="ver-autores">${escaparHtml(autores)}</span>
-                ${meuPin && souHost ? `<button class="btn-votar-chip" onclick="iniciarVotacaoChip('${categoria.id}','${normalizarTexto(r.texto)}')">🗳️</button>` : ''}
             </div>`;
     }).join('') : '<div class="ver-vazio">Sem respostas</div>';
 
@@ -1005,14 +1004,10 @@ function renderCategoriaVerificacao() {
 }
 
 function iniciarVotacaoChip(catId, chave) {
-    if (!meuPin || !souHost) return;
-    socket.emit('iniciarVotacao', {
-        pin: meuPin,
-        item: { key: `${catId}__${chave}` }
-    });
+    return;
 }
 
-function mostrarPainelVotacao(itemOuCatId, duracaoOuChave, totalJogadores) {
+function mostrarPainelVotacao(itemOuCatId, duracaoOuChave, totalJogadores, endsAtOpcional) {
     const painel = document.getElementById('painel-votacao');
     if (!painel) return;
 
@@ -1029,6 +1024,9 @@ function mostrarPainelVotacao(itemOuCatId, duracaoOuChave, totalJogadores) {
     const total = typeof itemOuCatId === 'object'
         ? totalJogadores
         : (estadoServidor.votacaoAtual?.totalJogadores || 0);
+    const endsAt = typeof itemOuCatId === 'object'
+        ? (endsAtOpcional || estadoServidor.votacaoAtual?.endsAt)
+        : null;
 
     painel.innerHTML = `
         <div class="vot-overlay">
@@ -1049,7 +1047,11 @@ function mostrarPainelVotacao(itemOuCatId, duracaoOuChave, totalJogadores) {
     clearInterval(votacaoTimerInterval);
     let restante = Number(duracao) || 0;
     votacaoTimerInterval = setInterval(() => {
-        restante -= 1;
+        if (endsAt) {
+            restante = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        } else {
+            restante -= 1;
+        }
         const el = document.getElementById('vot-timer');
         if (el) el.textContent = String(Math.max(restante, 0));
         if (restante <= 0) clearInterval(votacaoTimerInterval);

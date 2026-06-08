@@ -14,14 +14,7 @@ const PORT = process.env.PORT || 3001;
 app.use(express.static(path.join(__dirname)));
 
 const salas = new Map();
-const TEMPO_VOTACAO_MS = 15000;
-
-function respostaClaramenteValida(texto, letraAtual) {
-    const t = String(texto || '').trim();
-    if (!t) return false;
-    if (!t.toUpperCase().startsWith(String(letraAtual || '').toUpperCase())) return false;
-    return /^[A-Za-zÀ-ÖØ-öø-ÿ' -]{2,}$/.test(t);
-}
+const TEMPO_VOTACAO_MS = 20000;
 
 function normalizarTexto(texto) {
     return String(texto || '')
@@ -127,7 +120,6 @@ function montarFilaValidacao(sala) {
                     texto,
                     donos: [submissao.id],
                     quantidade: 1,
-                    precisaVotacao: true,
                     valido: null,
                     sim: 0,
                     nao: 0
@@ -142,22 +134,8 @@ function montarFilaValidacao(sala) {
         });
     });
 
-    for (const item of fila) {
-        if (respostaClaramenteValida(item.texto, sala.letraAtual)) {
-            item.precisaVotacao = false;
-            item.valido = true;
-            sala.resultadosValidacao[item.key] = {
-                ...item,
-                votos: {},
-                sim: 0,
-                nao: 0,
-                valido: true
-            };
-        }
-    }
-
     sala.itensVerificacao = fila;
-    sala.filaValidacao = fila.filter(item => item.precisaVotacao);
+    sala.filaValidacao = [...fila];
     sala.votacaoAtiva = null;
 }
 
@@ -395,7 +373,9 @@ function iniciarProximaVotacao(pin, sala) {
     sala.votacaoAtiva = {
         ...proxima,
         votos: {},
-        timer: null
+        timer: null,
+        startedAt: Date.now(),
+        endsAt: Date.now() + TEMPO_VOTACAO_MS
     };
 
     sala.votacaoAtiva.timer = setTimeout(() => {
@@ -410,6 +390,8 @@ function iniciarProximaVotacao(pin, sala) {
     io.to(pin).emit('votacaoIniciada', {
         catId: proxima.catId,
         chave: proxima.key,
+        startedAt: sala.votacaoAtiva.startedAt,
+        endsAt: sala.votacaoAtiva.endsAt,
         item: {
             key: proxima.key,
             catId: proxima.catId,
@@ -560,6 +542,7 @@ io.on('connection', (socket) => {
         if (!sala) return;
         if (!sala.jogadores.some(j => j.id === socket.id)) return;
         if (!sala.votacaoAtiva || sala.votacaoAtiva.key !== itemId) return;
+        if (Object.prototype.hasOwnProperty.call(sala.votacaoAtiva.votos, socket.id)) return;
 
         sala.votacaoAtiva.votos[socket.id] = Boolean(aceito);
 
@@ -585,50 +568,6 @@ io.on('connection', (socket) => {
         if (sala.votacaoAtiva) return;
         if (!sala.filaValidacao || sala.filaValidacao.length > 0) return;
         calcularPontuacaoRodada(pin);
-    });
-
-    socket.on('iniciarVotacao', ({ pin, item }) => {
-        if (!pin || typeof pin !== 'string') return;
-        const sala = salas.get(pin);
-        if (!sala) return;
-        if (sala.hostId !== socket.id) return;
-        if (!item?.key) return;
-        if (!sala.itensVerificacao?.find(i => i.key === item.key)) return;
-
-        if (sala.votacaoAtiva?.timer) clearTimeout(sala.votacaoAtiva.timer);
-
-        const alvo = sala.itensVerificacao.find(i => i.key === item.key);
-        sala.votacaoAtiva = {
-            key: alvo.key,
-            catId: alvo.catId,
-            categoria: alvo.categoria,
-            emoji: alvo.emoji,
-            texto: alvo.texto,
-            donos: alvo.donos,
-            quantidade: alvo.quantidade,
-            votos: {}
-        };
-
-        sala.votacaoAtiva.timer = setTimeout(() => {
-            const atual = salas.get(pin);
-            if (atual?.votacaoAtiva?.key === alvo.key) {
-                finalizarVotacaoItem(pin);
-            }
-        }, TEMPO_VOTACAO_MS);
-
-        io.to(pin).emit('votacaoIniciada', {
-            item: {
-                key: alvo.key,
-                catId: alvo.catId,
-                categoria: alvo.categoria,
-                emoji: alvo.emoji,
-                texto: alvo.texto,
-                donos: alvo.donos,
-                quantidade: alvo.quantidade
-            },
-            duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
-            totalJogadores: sala.jogadores.length
-        });
     });
 
     socket.on('chatMsg', ({ pin, nome, msg }) => {
