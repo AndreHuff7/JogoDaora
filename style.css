@@ -237,21 +237,17 @@ button:active { transform: scale(.97); }
   border-radius: 10px;
   padding: .7rem 1rem;
   display: flex;
-  align-items: center;
-  gap: .5rem;
+  flex-direction: column;
+  gap: .65rem;
   font-size: .97rem;
   border-left: 4px solid;
   box-shadow: var(--sombra);
 }
-#resultado-lista li.valido   { border-color: var(--cor-valido); }
-#resultado-lista li.invalido { border-color: var(--cor-invalido); }
 #resultado-lista li .pts {
   margin-left: auto;
   font-weight: 700;
   font-size: .9rem;
 }
-#resultado-lista li.valido   .pts { color: var(--cor-valido); }
-#resultado-lista li.invalido .pts { color: var(--cor-invalido); }
 
 #pontuacao-total {
   text-align: center;
@@ -340,81 +336,292 @@ button:active { transform: scale(.97); }
 #btn-add-cat:hover { filter: brightness(1.12); }
 
 /* ── Tela verificação ────────────────────────── */
-.ver-header {
+.ver-progresso {
   text-align: center;
-  margin-bottom: 1.2rem;
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.45);
+  margin-bottom: .8rem;
 }
-.ver-header h2 {
+.ver-categoria-nome {
+  text-align: center;
+  font-size: clamp(2rem, 10vw, 3.2rem);
+  font-weight: 900;
   color: var(--cor-destaque2);
-  font-size: 1.4rem;
+  letter-spacing: .06em;
+  margin-bottom: 2.2rem;
+  text-shadow: 0 2px 18px rgba(250,204,21,.25);
 }
-.ver-header p {
+#ver-chips-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .7rem;
+  min-height: 130px;
+  justify-content: center;
+}
+.ver-chip-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .3rem;
+  cursor: pointer;
+}
+.ver-chip-wrapper .resposta-chip {
+  font-size: 1.2rem;
+  font-weight: 900;
+  padding: .8rem 2.5rem;
+  border-radius: 999px;
+  letter-spacing: .07em;
+  transition: transform .1s, box-shadow .15s;
+  user-select: none;
+}
+.ver-chip-wrapper:hover .resposta-chip {
+  transform: scale(1.05);
+  box-shadow: 0 6px 22px rgba(0,0,0,.4);
+}
+.ver-chip-wrapper .resposta-chip.aceito {
+  background: #4ade80;
+  color: #052e16;
+  border: none;
+}
+.ver-chip-wrapper .resposta-chip.negado {
+  background: rgba(148,163,184,.18);
+  color: rgba(241,245,249,.45);
+  border: 1.5px solid rgba(148,163,184,.28);
+}
+.chip-label-aceito {
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .2em;
+  color: #4ade80;
+  text-transform: uppercase;
+}
+.ver-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 2.8rem;
+  gap: .8rem;
+}
+.ver-btn-nav {
+  all: unset;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 900;
+  padding: .7rem 1.4rem;
+  border-radius: var(--raio);
+  background: var(--cor-input-bg);
+  color: var(--cor-texto);
+  border: 2px solid var(--cor-input-borda);
+  transition: filter .15s;
+  text-align: center;
+}
+.ver-btn-nav:hover { filter: brightness(1.2); }
+.ver-btn-avancar {
+  background: var(--cor-destaque);
+  border-color: var(--cor-destaque);
+  color: #fff;
+  flex: 1;
+  font-size: 1rem;
+  letter-spacing: .05em;
+}
+.ver-respostas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+}
+.resposta-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: .38rem .7rem;
+  border-radius: 999px;
+  font-size: .88rem;
+  font-weight: 800;
+  line-height: 1;
+  border: 1px solid transparent;
+}
+.resposta-chip.aceito {
+  background: rgba(34,197,94,.15);
+  color: #dcfce7;
+  border-color: rgba(34,197,94,.42);
+}
+.resposta-chip.negado {
+  background: rgba(148,163,184,.12);
   color: var(--cor-suave);
-  margin-top: .3rem;
-  font-size: .95rem;
+  border-color: rgba(148,163,184,.28);
 }
-.ver-header strong { color: var(--cor-destaque); font-size: 1.2em; }
-#ver-lista {
+.resposta-chip.resposta-vazia {
+  font-style: italic;
+}
+em.vazio { color: var(--cor-suave); font-style: italic; font-weight: 400; }
+.resultado-card {
+  list-style: none;
+}
+.resultado-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.resultado-cabecalho strong {
+  font-size: .95rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--cor-texto);
+}
+.ver-vazio {
+  color: var(--cor-suave);
+  font-style: italic;
+  text-align: center;
+  padding: .5rem 0;
+}
+
+/* ── Placar jogadores por rodada ────────────── */
+.placar-jogadores {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  margin-bottom: .9rem;
+  background: var(--cor-input-bg);
+  border-radius: var(--raio);
+  padding: .6rem .9rem;
+}
+.placar-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .2rem 0;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.placar-linha:last-child { border-bottom: none; }
+.placar-nome {
+  font-size: .88rem;
+  font-weight: 600;
+  color: var(--cor-suave);
+}
+.placar-linha.placar-eu .placar-nome {
+  color: var(--cor-destaque2);
+  font-weight: 800;
+}
+.placar-pts {
+  font-size: .9rem;
+  font-weight: 800;
+  color: var(--cor-destaque);
+}
+
+/* ── Votação overlay ────────────────────────── */
+#painel-votacao {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+}
+.vot-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10,10,40,.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.2rem;
+}
+.vot-card {
+  background: var(--cor-card);
+  border-radius: var(--raio);
+  padding: 1.4rem 1.6rem;
+  text-align: center;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 8px 40px rgba(0,0,0,.6);
   display: flex;
   flex-direction: column;
   gap: .7rem;
-  margin-bottom: .5rem;
 }
-.ver-card {
-  background: var(--cor-card);
-  border-radius: var(--raio);
-  padding: .85rem 1rem;
-  display: flex;
-  align-items: center;
-  gap: .8rem;
-  flex-wrap: wrap;
-  box-shadow: var(--sombra);
-}
-.ver-info { flex: 1; min-width: 120px; }
-.ver-cat {
-  display: block;
+.vot-categoria {
   font-size: .72rem;
-  letter-spacing: .1em;
+  font-weight: 700;
+  letter-spacing: .2em;
   text-transform: uppercase;
   color: var(--cor-suave);
-  font-weight: 700;
-  margin-bottom: .2rem;
 }
-.ver-resposta {
-  font-size: 1rem;
-  color: var(--cor-texto);
-  font-weight: 600;
+.vot-resposta {
+  font-size: 1.8rem;
+  font-weight: 900;
+  color: var(--cor-destaque2);
+  letter-spacing: .05em;
 }
-em.vazio { color: var(--cor-suave); font-style: italic; font-weight: 400; }
-.ver-botoes {
+.vot-timer {
+  font-size: 2rem;
+  font-weight: 900;
+  color: var(--cor-destaque);
+  line-height: 1;
+}
+.vot-contagem {
+  font-size: .8rem;
+  color: var(--cor-suave);
+}
+.vot-botoes {
   display: flex;
-  gap: .4rem;
-  flex-wrap: wrap;
+  gap: .6rem;
 }
-.vbtn {
+.vot-btn {
   all: unset;
   cursor: pointer;
-  display: inline-block;
-  padding: .35rem .65rem;
-  border-radius: 8px;
-  font-size: .8rem;
-  font-weight: 700;
-  border: 2px solid transparent;
-  transition: border-color .15s, background .15s;
-  white-space: nowrap;
-  letter-spacing: .03em;
+  flex: 1;
+  padding: .7rem .5rem;
+  border-radius: var(--raio);
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: .05em;
+  transition: filter .15s, opacity .15s;
+  text-align: center;
 }
-.vbtn-valido   { background: rgba(34,197,94,.12);  color: var(--cor-valido); }
-.vbtn-repetido { background: rgba(250,204,21,.12);  color: var(--cor-destaque2); }
-.vbtn-invalido { background: rgba(239,68,68,.12);   color: var(--cor-invalido); }
-.vbtn-valido.ativo   { border-color: var(--cor-valido);    background: rgba(34,197,94,.28); }
-.vbtn-repetido.ativo { border-color: var(--cor-destaque2); background: rgba(250,204,21,.28); }
-.vbtn-invalido.ativo { border-color: var(--cor-invalido);  background: rgba(239,68,68,.28); }
-.vbtn:hover { filter: brightness(1.15); }
-
-/* resultado: repetido */
-#resultado-lista li.repetido { border-color: var(--cor-destaque2); }
-#resultado-lista li.repetido .pts { color: var(--cor-destaque2); }
+.vot-btn:disabled { opacity: .45; cursor: not-allowed; }
+.vot-sim { background: #22c55e; color: #052e16; }
+.vot-nao { background: #ef4444; color: #fff; }
+.vot-btn:not(:disabled):hover { filter: brightness(1.15); }
+.vot-resultado { margin-top: .3rem; }
+.vot-veredicto {
+  font-size: 1.5rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  padding: .5rem 1rem;
+  border-radius: var(--raio);
+  margin-bottom: .3rem;
+}
+.vot-aceito  { background: rgba(34,197,94,.18); color: #4ade80; }
+.vot-negado  { background: rgba(239,68,68,.18);  color: #f87171; }
+.vot-placar  { font-size: .85rem; color: var(--cor-suave); font-weight: 700; }
+.btn-votar-chip {
+  all: unset;
+  cursor: pointer;
+  font-size: .85rem;
+  padding: .15rem .4rem;
+  border-radius: 6px;
+  background: rgba(250,204,21,.15);
+  color: var(--cor-destaque2);
+  border: 1px solid rgba(250,204,21,.3);
+  margin-left: .3rem;
+  transition: filter .1s;
+}
+.btn-votar-chip:hover { filter: brightness(1.3); }
+.vot-info {
+  font-size: .72rem;
+  color: var(--cor-suave);
+  font-weight: 700;
+  margin-top: .15rem;
+}
+.ver-autores {
+  font-size: .72rem;
+  color: var(--cor-suave);
+  text-align: center;
+  max-width: 100%;
+}
+.ver-chip-wrapper.ativo .resposta-chip {
+  box-shadow: 0 0 0 2px rgba(250,204,21,.35);
+}
 
 /* ── Layout 2 colunas do lobby ─────────────── */
 .lobby-body {

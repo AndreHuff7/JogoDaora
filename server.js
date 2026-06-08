@@ -14,6 +14,23 @@ const PORT = process.env.PORT || 3001;
 app.use(express.static(path.join(__dirname)));
 
 const salas = new Map();
+const TEMPO_VOTACAO_MS = 15000;
+
+function normalizarTexto(texto) {
+    return String(texto || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+}
+
+function embaralharArr(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
 
 function gerarPIN() {
     let pin;
@@ -23,10 +40,385 @@ function gerarPIN() {
     return pin;
 }
 
+function criarEstadoSala(pin, hostId, hostNome) {
+    const sala = {
+        pin,
+        hostId,
+        jogadores: [{ id: hostId, nome: String(hostNome || '').trim().slice(0, 20) }],
+        pontuacoes: { [hostId]: 0 },
+        rodadaAtual: 0,
+        letraAtual: '',
+        respostasRodada: {},
+        votos: {},
+        historicoRodadas: [],
+        categoriasFila: [],
+        categoriasRodada: [],
+        filaValidacao: [],
+        resultadosValidacao: {},
+        votacaoAtiva: null,
+        fase: 'lobby',
+        config: {
+            categorias: [],
+            letras: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
+            rodadas: 8
+        }
+    };
+
+    salas.set(pin, sala);
+    return sala;
+}
+
 function emitirJogadores(pin) {
     const sala = salas.get(pin);
     if (!sala) return;
-    io.to(pin).emit('atualizarJogadores', sala.jogadores);
+    const jogadores = [...sala.jogadores]
+        .map(j => ({
+            ...j,
+            host: j.id === sala.hostId,
+            pontos: sala.pontuacoes?.[j.id] || 0
+        }))
+        .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome, 'pt-BR'));
+    io.to(pin).emit('atualizarJogadores', jogadores);
+}
+
+function obterSala(pin) {
+    return salas.get(pin);
+}
+
+function obterCategoriaAtual(sala) {
+    if (sala.categoriasRodada?.length) return sala.categoriasRodada;
+    const todasCats = sala.config.categorias || [];
+    if (todasCats.length <= 5) return [...todasCats];
+    if (!sala.categoriasFila || sala.categoriasFila.length === 0) {
+        sala.categoriasFila = embaralharArr([...todasCats]);
+    }
+    const selecionadas = sala.categoriasFila.splice(0, 5);
+    if (selecionadas.length < 5) {
+        sala.categoriasFila = embaralharArr([...todasCats]);
+        selecionadas.push(...sala.categoriasFila.splice(0, 5 - selecionadas.length));
+    }
+    return selecionadas;
+}
+
+function montarFilaValidacao(sala) {
+    const fila = [];
+    const vistos = new Map();
+
+    (sala.categoriasRodada || []).forEach(categoria => {
+        Object.values(sala.respostasRodada || {}).forEach(submissao => {
+            const texto = String(submissao.respostas?.[categoria.id] || '').trim();
+            if (!texto) return;
+            const chave = `${categoria.id}__${normalizarTexto(texto)}`;
+            if (!vistos.has(chave)) {
+                const item = {
+                    key: chave,
+                    catId: categoria.id,
+                    categoria: categoria.label,
+                    emoji: categoria.emoji,
+                    texto,
+                    donos: [submissao.id],
+                    quantidade: 1,
+                    valido: null,
+                    sim: 0,
+                    nao: 0
+                };
+                vistos.set(chave, item);
+                fila.push(item);
+            } else {
+                const item = vistos.get(chave);
+                item.donos.push(submissao.id);
+                item.quantidade += 1;
+            }
+        });
+    });
+
+    sala.filaValidacao = fila;
+    sala.resultadosValidacao = {};
+    sala.votacaoAtiva = null;
+}
+
+function finalizarVotacaoItem(pin) {
+    const sala = salas.get(pin);
+    if (!sala || !sala.votacaoAtiva) return;
+
+    const atual = sala.votacaoAtiva;
+    if (atual.timer) clearTimeout(atual.timer);
+
+    const sim = Object.values(atual.votos).filter(Boolean).length;
+    const nao = Object.values(atual.votos).filter(v => !v).length;
+    const aceito = sim >= nao;
+
+    const item = sala.filaValidacao.find(i => i.key === atual.key) || {
+        key: atual.key,
+        catId: atual.catId,
+        categoria: atual.categoria,
+        emoji: atual.emoji,
+        texto: atual.texto,
+        donos: atual.donos,
+        quantidade: atual.quantidade
+    };
+
+    sala.resultadosValidacao[atual.key] = {
+        ...item,
+        sim,
+        nao,
+        valido: aceito,
+        votos: { ...atual.votos }
+    };
+
+    sala.votacaoAtiva = null;
+
+    io.to(pin).emit('votacaoEncerrada', {
+        itemId: atual.key,
+        catId: atual.catId,
+        chave: atual.key,
+        sim,
+        nao,
+        aceito
+    });
+
+    if (sala.filaValidacao.length > 0) {
+        setTimeout(() => iniciarProximaVotacao(pin, sala), 750);
+        return;
+    }
+
+    calcularPontuacaoRodada(pin);
+}
+
+function calcularPontuacaoRodada(pin) {
+    const sala = salas.get(pin);
+    if (!sala) return;
+
+    const pontuacaoRodada = {};
+    sala.jogadores.forEach(j => {
+        pontuacaoRodada[j.id] = 0;
+    });
+
+    sala.jogadores.forEach(jogador => {
+        sala.categoriasRodada.forEach(categoria => {
+            const texto = String(sala.respostasRodada?.[jogador.id]?.respostas?.[categoria.id] || '').trim();
+            if (!texto) return;
+
+            const chave = `${categoria.id}__${normalizarTexto(texto)}`;
+            const resultado = sala.resultadosValidacao[chave];
+            if (!resultado || !resultado.valido) return;
+
+            pontuacaoRodada[jogador.id] += resultado.quantidade > 1 ? 5 : 10;
+        });
+    });
+
+    sala.jogadores.forEach(jogador => {
+        sala.pontuacoes[jogador.id] = (sala.pontuacoes[jogador.id] || 0) + (pontuacaoRodada[jogador.id] || 0);
+    });
+
+    sala.historicoRodadas.push({
+        rodada: sala.rodadaAtual,
+        letra: sala.letraAtual,
+        pontuacaoRodada: { ...pontuacaoRodada }
+    });
+
+    sala.fase = 'resultado';
+
+    const ranking = obterRankingSala(sala);
+    emitirJogadores(pin);
+    io.to(pin).emit('leaderboardAtualizado', ranking);
+    io.to(pin).emit('rodadaFinalizada', {
+        rodadaAtual: sala.rodadaAtual,
+        totalRodadas: sala.config.rodadas,
+        letraAtual: sala.letraAtual,
+        pontuacaoRodada,
+        ranking,
+        historicoRodadas: sala.historicoRodadas
+    });
+}
+
+function obterRankingSala(sala) {
+    return [...sala.jogadores]
+        .map(j => ({
+            id: j.id,
+            nome: j.nome,
+            host: j.id === sala.hostId,
+            pontos: sala.pontuacoes?.[j.id] || 0
+        }))
+        .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+function broadcastEstadoSala(pin) {
+    const sala = obterSala(pin);
+    if (!sala) return;
+    emitirJogadores(pin);
+    io.to(pin).emit('estadoSalaAtualizado', {
+        rodadaAtual: sala.rodadaAtual,
+        letraAtual: sala.letraAtual,
+        totalRodadas: sala.config.rodadas,
+        fase: sala.fase,
+        ranking: obterRankingSala(sala)
+    });
+}
+
+function registrarRespostasRodada(socket, pin, nome, respostas) {
+    const sala = salas.get(pin);
+    if (!sala) return;
+    if (!sala.jogadores.some(j => j.id === socket.id)) return;
+
+    sala.respostasRodada[socket.id] = {
+        id: socket.id,
+        nome: String(nome || '').trim().slice(0, 20),
+        respostas
+    };
+
+    io.to(pin).emit('respostasRodadaAtualizadas', { respostas: sala.respostasRodada });
+
+    const submetidos = sala.jogadores.filter(j => sala.respostasRodada[j.id]).length;
+    if (submetidos === sala.jogadores.length) {
+        iniciarVerificacaoRodada(pin, sala);
+    }
+}
+
+function iniciarRodadaInterna(pin, sala) {
+    sala.fase = 'jogando';
+    sala.respostasRodada = {};
+    sala.resultadosValidacao = {};
+    sala.filaValidacao = [];
+    sala.votacaoAtiva = null;
+    sala.rodadaAtual = (sala.rodadaAtual || 0) + 1;
+
+    const letras = sala.config.letras?.length ? sala.config.letras : [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+    sala.letraAtual = letras[Math.floor(Math.random() * letras.length)];
+    sala.categoriasRodada = [];
+    sala.categoriasRodada = obterCategoriaAtual(sala);
+
+    io.to(pin).emit('jogoIniciado', {
+        letra: sala.letraAtual,
+        categorias: sala.categoriasRodada,
+        rodadaAtual: sala.rodadaAtual,
+        totalRodadas: sala.config.rodadas,
+        ranking: obterRankingSala(sala)
+    });
+}
+
+function iniciarVerificacaoRodada(pin, sala) {
+    sala.fase = 'verificacao';
+    montarFilaValidacao(sala);
+    io.to(pin).emit('iniciarVerificacao', {
+        rodadaAtual: sala.rodadaAtual,
+        letraAtual: sala.letraAtual,
+        categorias: sala.categoriasRodada,
+        respostas: sala.respostasRodada,
+        ranking: obterRankingSala(sala)
+    });
+    iniciarProximaVotacao(pin, sala);
+}
+
+function iniciarProximaVotacao(pin, sala) {
+    if (sala.votacaoAtiva?.timer) clearTimeout(sala.votacaoAtiva.timer);
+    const proxima = sala.filaValidacao.shift();
+    if (!proxima) {
+        finalizarRodada(pin, sala);
+        return;
+    }
+
+    sala.votacaoAtiva = {
+        ...proxima,
+        votos: {},
+        timer: null
+    };
+
+    sala.votacaoAtiva.timer = setTimeout(() => {
+        if (salas.has(pin)) {
+            const atual = salas.get(pin);
+            if (atual?.votacaoAtiva?.key === proxima.key) {
+                encerrarVotacaoAtual(pin, atual);
+            }
+        }
+    }, TEMPO_VOTACAO_MS);
+
+    io.to(pin).emit('votacaoIniciada', {
+        catId: proxima.catId,
+        chave: proxima.key,
+        item: {
+            key: proxima.key,
+            catId: proxima.catId,
+            categoria: proxima.categoria,
+            emoji: proxima.emoji,
+            texto: proxima.texto,
+            donos: proxima.donos,
+            quantidade: proxima.quantidade
+        },
+        duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
+        totalJogadores: sala.jogadores.length
+    });
+}
+
+function encerrarVotacaoAtual(pin, sala) {
+    const atual = sala.votacaoAtiva;
+    if (!atual) return;
+    if (atual.timer) clearTimeout(atual.timer);
+
+    const sim = Object.values(atual.votos).filter(Boolean).length;
+    const nao = Object.values(atual.votos).filter(v => !v).length;
+    const aceito = sim >= nao;
+
+    sala.resultadosValidacao[atual.key] = {
+        ...atual,
+        sim,
+        nao,
+        valido: aceito
+    };
+
+    sala.votacaoAtiva = null;
+
+    io.to(pin).emit('votacaoEncerrada', {
+        item: {
+            key: atual.key,
+            catId: atual.catId,
+            categoria: atual.categoria,
+            emoji: atual.emoji,
+            texto: atual.texto,
+            donos: atual.donos,
+            quantidade: atual.quantidade
+        },
+        sim,
+        nao,
+        aceito
+    });
+
+    setTimeout(() => iniciarProximaVotacao(pin, sala), 900);
+}
+
+function finalizarRodada(pin, sala) {
+    const pontuacaoRodada = {};
+    sala.jogadores.forEach(j => {
+        pontuacaoRodada[j.id] = 0;
+    });
+
+    Object.values(sala.resultadosValidacao || {}).forEach(resultado => {
+        const pontos = resultado.valido ? (resultado.quantidade > 1 ? 5 : 10) : 0;
+        resultado.donos.forEach(id => {
+            pontuacaoRodada[id] = (pontuacaoRodada[id] || 0) + pontos;
+        });
+    });
+
+    sala.jogadores.forEach(j => {
+        sala.pontuacoes[j.id] = (sala.pontuacoes[j.id] || 0) + (pontuacaoRodada[j.id] || 0);
+    });
+
+    sala.historicoRodadas.push({
+        rodada: sala.rodadaAtual,
+        letra: sala.letraAtual,
+        pontuacaoRodada: { ...pontuacaoRodada }
+    });
+
+    sala.fase = 'resultado';
+    emitirJogadores(pin);
+    io.to(pin).emit('resultadoRodada', {
+        rodadaAtual: sala.rodadaAtual,
+        letraAtual: sala.letraAtual,
+        pontuacaoRodada,
+        ranking: obterRankingSala(sala),
+        historicoRodadas: sala.historicoRodadas,
+        pontuacoes: sala.pontuacoes
+    });
 }
 
 io.on('connection', (socket) => {
@@ -35,14 +427,7 @@ io.on('connection', (socket) => {
         if (!nome || typeof nome !== 'string') return;
 
         const pin = gerarPIN();
-        salas.set(pin, {
-            jogadores: [{ id: socket.id, nome: nome.trim().slice(0, 20) }],
-            config: {
-                categorias: [],
-                letras: [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
-                rodadas: 8
-            }
-        });
+        criarEstadoSala(pin, socket.id, nome);
         socket.join(pin);
         socket.data.pin = pin;
 
@@ -64,6 +449,7 @@ io.on('connection', (socket) => {
         }
 
         sala.jogadores.push({ id: socket.id, nome: nome.trim().slice(0, 20) });
+        sala.pontuacoes[socket.id] = sala.pontuacoes[socket.id] || 0;
         socket.join(pin);
         socket.data.pin = pin;
 
@@ -75,9 +461,12 @@ io.on('connection', (socket) => {
     socket.on('atualizarConfig', ({ pin, categorias, letras, rodadas }) => {
         const sala = salas.get(pin);
         if (!sala) return;
-        if (sala.jogadores[0]?.id !== socket.id) return;
+        if (sala.hostId !== socket.id) return;
 
         sala.config = { categorias, letras, rodadas };
+        sala.categoriasFila = [];
+        sala.categoriasRodada = [];
+        emitirJogadores(pin);
         socket.to(pin).emit('configAtualizada', { categorias, letras, rodadas });
     });
 
@@ -85,11 +474,113 @@ io.on('connection', (socket) => {
         if (typeof pin !== 'string') return;
         const sala = salas.get(pin);
         if (!sala) return;
-        if (sala.jogadores[0]?.id !== socket.id) return;
+        if (sala.hostId !== socket.id) return;
 
-        const letras = sala.config.letras?.length ? sala.config.letras : [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
-        const letra  = letras[Math.floor(Math.random() * letras.length)];
-        io.to(pin).emit('jogoIniciado', { letra });
+        iniciarRodadaInterna(pin, sala);
+        broadcastEstadoSala(pin);
+    });
+
+    socket.on('enviarRespostasRodada', ({ pin, nome, respostas }) => {
+        if (!pin || typeof pin !== 'string' || !respostas || typeof respostas !== 'object') return;
+        registrarRespostasRodada(socket, pin, nome, respostas);
+    });
+
+    socket.on('enviarRespostas', ({ pin, nome, respostas }) => {
+        if (!pin || typeof pin !== 'string' || !respostas || typeof respostas !== 'object') return;
+        registrarRespostasRodada(socket, pin, nome, respostas);
+    });
+
+    socket.on('proximaRodada', (pin) => {
+        if (typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+
+        const totalRodadas = sala.config.rodadas || 8;
+        if (sala.rodadaAtual >= totalRodadas) {
+            sala.fase = 'finalizada';
+            io.to(pin).emit('jogoFinalizado');
+        } else {
+            iniciarRodadaInterna(pin, sala);
+            broadcastEstadoSala(pin);
+        }
+    });
+
+    socket.on('votarPalavra', ({ pin, itemId, aceito }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (!sala.jogadores.some(j => j.id === socket.id)) return;
+        if (!sala.votacaoAtiva || sala.votacaoAtiva.key !== itemId) return;
+
+        sala.votacaoAtiva.votos[socket.id] = Boolean(aceito);
+
+        io.to(pin).emit('votacaoAtualizada', {
+            itemId,
+            catId: sala.votacaoAtiva.catId,
+            chave: itemId,
+            votos: sala.votacaoAtiva.votos,
+            totalJogadores: sala.jogadores.length
+        });
+
+        const totalVotos = Object.keys(sala.votacaoAtiva.votos).length;
+        if (totalVotos >= sala.jogadores.length) {
+            finalizarVotacaoItem(pin);
+        }
+    });
+
+    socket.on('finalizarVerificacao', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+        if (sala.votacaoAtiva) return;
+        if (!sala.filaValidacao || sala.filaValidacao.length > 0) return;
+        calcularPontuacaoRodada(pin);
+    });
+
+    socket.on('iniciarVotacao', ({ pin, item }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+        if (!item?.key) return;
+        if (!sala.itensVerificacao?.find(i => i.key === item.key)) return;
+
+        if (sala.votacaoAtiva?.timer) clearTimeout(sala.votacaoAtiva.timer);
+
+        const alvo = sala.itensVerificacao.find(i => i.key === item.key);
+        sala.votacaoAtiva = {
+            key: alvo.key,
+            catId: alvo.catId,
+            categoria: alvo.categoria,
+            emoji: alvo.emoji,
+            texto: alvo.texto,
+            donos: alvo.donos,
+            quantidade: alvo.quantidade,
+            votos: {}
+        };
+
+        sala.votacaoAtiva.timer = setTimeout(() => {
+            const atual = salas.get(pin);
+            if (atual?.votacaoAtiva?.key === alvo.key) {
+                finalizarVotacaoItem(pin);
+            }
+        }, TEMPO_VOTACAO_MS);
+
+        io.to(pin).emit('votacaoIniciada', {
+            item: {
+                key: alvo.key,
+                catId: alvo.catId,
+                categoria: alvo.categoria,
+                emoji: alvo.emoji,
+                texto: alvo.texto,
+                donos: alvo.donos,
+                quantidade: alvo.quantidade
+            },
+            duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
+            totalJogadores: sala.jogadores.length
+        });
     });
 
     socket.on('chatMsg', ({ pin, nome, msg }) => {
@@ -111,8 +602,14 @@ io.on('connection', (socket) => {
         const sala = salas.get(pin);
         if (!sala) return;
 
-        const eraHost = sala.jogadores[0]?.id === socket.id;
+        const eraHost = sala.hostId === socket.id;
         sala.jogadores = sala.jogadores.filter(j => j.id !== socket.id);
+        if (sala.pontuacoes) {
+            delete sala.pontuacoes[socket.id];
+        }
+        if (sala.respostasRodada) {
+            delete sala.respostasRodada[socket.id];
+        }
 
         if (sala.jogadores.length === 0) {
             salas.delete(pin);
@@ -121,8 +618,9 @@ io.on('connection', (socket) => {
 
         emitirJogadores(pin);
 
-        if (eraHost) {
-            io.to(sala.jogadores[0].id).emit('voceEhHost');
+        if (eraHost && sala.jogadores[0]) {
+            sala.hostId = sala.jogadores[0].id;
+            io.to(sala.hostId).emit('voceEhHost');
         }
     });
 });

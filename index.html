@@ -155,18 +155,21 @@
 
     <!-- Tela de verificação -->
     <div id="tela-verificacao" class="tela">
-      <div class="ver-header">
-        <h2>Verificar Respostas</h2>
-        <p>Letra sorteada: <strong id="ver-letra"></strong></p>
+      <div class="ver-progresso">VALIDAR AS RESPOSTAS <span id="ver-progresso-idx">1</span>/<span id="ver-progresso-total">1</span></div>
+      <div class="ver-categoria-nome" id="ver-categoria-nome"></div>
+      <div id="ver-chips-container"></div>
+      <div class="ver-nav">
+        <button class="ver-btn-nav ver-btn-prev" id="ver-btn-prev" onclick="navVerificacao(-1)">←</button>
+        <button class="ver-btn-nav ver-btn-avancar" id="ver-btn-avancar" onclick="navVerificacao(1)">→</button>
       </div>
-      <div id="ver-lista"></div>
-      <button onclick="confirmarVerificacao()">Confirmar Pontuação →</button>
+      <div id="painel-votacao" style="display:none"></div>
     </div>
 
     <!-- Tela de resultado -->
     <div id="tela-resultado" class="tela">
       <h2>Resultado da Rodada</h2>
       <p id="letra-usada"></p>
+      <div id="placar-jogadores" class="placar-jogadores"></div>
       <ul id="resultado-lista"></ul>
       <div id="pontuacao-total"></div>
       <div id="info-rodada" class="info-rodada"></div>
