@@ -344,7 +344,11 @@ function mostrarResultadoVotacao(catId, chave, sim, nao, aceito) {
 
 function votarPalavra(catId, chave, aceito) {
     if (!meuPin) return;
-    socket.emit('votarPalavra', { pin: meuPin, catId, chave, aceito });
+    socket.emit('votarPalavra', {
+        pin: meuPin,
+        itemId: `${catId}__${chave}`,
+        aceito
+    });
 }
 
 function navVerificacao(delta) {

@@ -536,20 +536,23 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('votarPalavra', ({ pin, itemId, aceito }) => {
+    socket.on('votarPalavra', ({ pin, itemId, catId, chave, aceito }) => {
         if (!pin || typeof pin !== 'string') return;
         const sala = salas.get(pin);
         if (!sala) return;
         if (!sala.jogadores.some(j => j.id === socket.id)) return;
-        if (!sala.votacaoAtiva || sala.votacaoAtiva.key !== itemId) return;
+
+        const itemIdResolvido = itemId || (catId && chave ? `${catId}__${chave}` : null);
+        if (!itemIdResolvido) return;
+        if (!sala.votacaoAtiva || sala.votacaoAtiva.key !== itemIdResolvido) return;
         if (Object.prototype.hasOwnProperty.call(sala.votacaoAtiva.votos, socket.id)) return;
 
         sala.votacaoAtiva.votos[socket.id] = Boolean(aceito);
 
         io.to(pin).emit('votacaoAtualizada', {
-            itemId,
+            itemId: itemIdResolvido,
             catId: sala.votacaoAtiva.catId,
-            chave: itemId,
+            chave: itemIdResolvido,
             votos: sala.votacaoAtiva.votos,
             totalJogadores: sala.jogadores.length
         });
