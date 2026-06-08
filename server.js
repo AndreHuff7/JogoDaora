@@ -16,6 +16,13 @@ app.use(express.static(path.join(__dirname)));
 const salas = new Map();
 const TEMPO_VOTACAO_MS = 15000;
 
+function respostaClaramenteValida(texto, letraAtual) {
+    const t = String(texto || '').trim();
+    if (!t) return false;
+    if (!t.toUpperCase().startsWith(String(letraAtual || '').toUpperCase())) return false;
+    return /^[A-Za-zÀ-ÖØ-öø-ÿ' -]{2,}$/.test(t);
+}
+
 function normalizarTexto(texto) {
     return String(texto || '')
         .trim()
@@ -53,6 +60,7 @@ function criarEstadoSala(pin, hostId, hostNome) {
         historicoRodadas: [],
         categoriasFila: [],
         categoriasRodada: [],
+        itensVerificacao: [],
         filaValidacao: [],
         resultadosValidacao: {},
         votacaoAtiva: null,
@@ -103,6 +111,7 @@ function obterCategoriaAtual(sala) {
 function montarFilaValidacao(sala) {
     const fila = [];
     const vistos = new Map();
+    sala.resultadosValidacao = {};
 
     (sala.categoriasRodada || []).forEach(categoria => {
         Object.values(sala.respostasRodada || {}).forEach(submissao => {
@@ -118,6 +127,7 @@ function montarFilaValidacao(sala) {
                     texto,
                     donos: [submissao.id],
                     quantidade: 1,
+                    precisaVotacao: true,
                     valido: null,
                     sim: 0,
                     nao: 0
@@ -132,8 +142,22 @@ function montarFilaValidacao(sala) {
         });
     });
 
-    sala.filaValidacao = fila;
-    sala.resultadosValidacao = {};
+    for (const item of fila) {
+        if (respostaClaramenteValida(item.texto, sala.letraAtual)) {
+            item.precisaVotacao = false;
+            item.valido = true;
+            sala.resultadosValidacao[item.key] = {
+                ...item,
+                votos: {},
+                sim: 0,
+                nao: 0,
+                valido: true
+            };
+        }
+    }
+
+    sala.itensVerificacao = fila;
+    sala.filaValidacao = fila.filter(item => item.precisaVotacao);
     sala.votacaoAtiva = null;
 }
 
@@ -148,7 +172,7 @@ function finalizarVotacaoItem(pin) {
     const nao = Object.values(atual.votos).filter(v => !v).length;
     const aceito = sim >= nao;
 
-    const item = sala.filaValidacao.find(i => i.key === atual.key) || {
+    const item = sala.itensVerificacao.find(i => i.key === atual.key) || {
         key: atual.key,
         catId: atual.catId,
         categoria: atual.categoria,
@@ -275,6 +299,51 @@ function registrarRespostasRodada(socket, pin, nome, respostas) {
     }
 }
 
+function encerrarRodadaPorStop(socket, pin, nome, respostas) {
+    const sala = salas.get(pin);
+    if (!sala) return;
+    if (sala.fase !== 'jogando') return;
+    if (!sala.jogadores.some(j => j.id === socket.id)) return;
+
+    const categorias = sala.categoriasRodada || [];
+    const completo = categorias.length > 0 && categorias.every(c => {
+        const valor = String(respostas?.[c.id] || '').trim();
+        return valor.length > 0;
+    });
+
+    if (!completo) {
+        socket.emit('erroEntrada', 'Preencha todas as categorias antes do STOP.');
+        return;
+    }
+
+    registrarRespostasRodada(socket, pin, nome, respostas);
+
+    if (sala.fase !== 'jogando') {
+        return;
+    }
+
+    sala.jogadores.forEach(jogador => {
+        if (!sala.respostasRodada[jogador.id]) {
+            const respostasVazias = {};
+            categorias.forEach(c => {
+                respostasVazias[c.id] = '';
+            });
+            sala.respostasRodada[jogador.id] = {
+                id: jogador.id,
+                nome: jogador.nome,
+                respostas: respostasVazias
+            };
+        }
+    });
+
+    io.to(pin).emit('rodadaEncerrada', {
+        por: socket.id,
+        nome: String(nome || '').trim().slice(0, 20)
+    });
+
+    iniciarVerificacaoRodada(pin, sala);
+}
+
 function iniciarRodadaInterna(pin, sala) {
     sala.fase = 'jogando';
     sala.respostasRodada = {};
@@ -305,8 +374,13 @@ function iniciarVerificacaoRodada(pin, sala) {
         letraAtual: sala.letraAtual,
         categorias: sala.categoriasRodada,
         respostas: sala.respostasRodada,
+        itens: sala.itensVerificacao,
         ranking: obterRankingSala(sala)
     });
+    if (sala.filaValidacao.length === 0) {
+        calcularPontuacaoRodada(pin);
+        return;
+    }
     iniciarProximaVotacao(pin, sala);
 }
 
@@ -328,7 +402,7 @@ function iniciarProximaVotacao(pin, sala) {
         if (salas.has(pin)) {
             const atual = salas.get(pin);
             if (atual?.votacaoAtiva?.key === proxima.key) {
-                encerrarVotacaoAtual(pin, atual);
+                finalizarVotacaoItem(pin);
             }
         }
     }, TEMPO_VOTACAO_MS);
@@ -351,39 +425,8 @@ function iniciarProximaVotacao(pin, sala) {
 }
 
 function encerrarVotacaoAtual(pin, sala) {
-    const atual = sala.votacaoAtiva;
-    if (!atual) return;
-    if (atual.timer) clearTimeout(atual.timer);
-
-    const sim = Object.values(atual.votos).filter(Boolean).length;
-    const nao = Object.values(atual.votos).filter(v => !v).length;
-    const aceito = sim >= nao;
-
-    sala.resultadosValidacao[atual.key] = {
-        ...atual,
-        sim,
-        nao,
-        valido: aceito
-    };
-
-    sala.votacaoAtiva = null;
-
-    io.to(pin).emit('votacaoEncerrada', {
-        item: {
-            key: atual.key,
-            catId: atual.catId,
-            categoria: atual.categoria,
-            emoji: atual.emoji,
-            texto: atual.texto,
-            donos: atual.donos,
-            quantidade: atual.quantidade
-        },
-        sim,
-        nao,
-        aceito
-    });
-
-    setTimeout(() => iniciarProximaVotacao(pin, sala), 900);
+    if (!sala?.votacaoAtiva) return;
+    finalizarVotacaoItem(pin);
 }
 
 function finalizarRodada(pin, sala) {
@@ -488,6 +531,11 @@ io.on('connection', (socket) => {
     socket.on('enviarRespostas', ({ pin, nome, respostas }) => {
         if (!pin || typeof pin !== 'string' || !respostas || typeof respostas !== 'object') return;
         registrarRespostasRodada(socket, pin, nome, respostas);
+    });
+
+    socket.on('pressionarStop', ({ pin, nome, respostas }) => {
+        if (!pin || typeof pin !== 'string' || !respostas || typeof respostas !== 'object') return;
+        encerrarRodadaPorStop(socket, pin, nome, respostas);
     });
 
     socket.on('proximaRodada', (pin) => {
@@ -616,12 +664,12 @@ io.on('connection', (socket) => {
             return;
         }
 
-        emitirJogadores(pin);
-
         if (eraHost && sala.jogadores[0]) {
             sala.hostId = sala.jogadores[0].id;
             io.to(sala.hostId).emit('voceEhHost');
         }
+
+        emitirJogadores(pin);
     });
 });
 

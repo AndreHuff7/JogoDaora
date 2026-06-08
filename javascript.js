@@ -80,23 +80,6 @@ socket.on('respostasRodadaAtualizadas', ({ respostas }) => {
     }
 });
 
-socket.on('votacaoIniciada', ({ catId, chave, duracao }) => {
-    mostrarPainelVotacao(catId, chave, duracao);
-});
-
-socket.on('votacaoAtualizada', ({ catId, chave, votos, totalJogadores }) => {
-    const key = `${catId}__${chave}`;
-    votacaoResultados[key] = { votos, totalJogadores };
-    atualizarContadorVotos(catId, chave, votos, totalJogadores);
-});
-
-socket.on('votacaoEncerrada', ({ catId, chave, sim, nao, aceito }) => {
-    clearInterval(votacaoTimerInterval);
-    const key = `${catId}__${chave}`;
-    votosManual[key] = aceito;
-    mostrarResultadoVotacao(catId, chave, sim, nao, aceito);
-});
-
 function emitirConfigSeModoOnline() {
     if (meuPin && souHost) {
         socket.emit('atualizarConfig', {
@@ -611,7 +594,7 @@ function iniciarJogo(letraForcada = null, categoriasForcadas = null) {
     timerInterval = setInterval(() => {
         tempoRestante--;
         atualizarTimer();
-        if (tempoRestante <= 0) pararJogo();
+        if (tempoRestante <= 0) pararJogo('tempo');
     }, 1000);
 
     mostrarTela("tela-jogo");
@@ -624,7 +607,7 @@ function atualizarTimer() {
     el.classList.toggle("urgente", tempoRestante <= 10);
 }
 
-function pararJogo() {
+function pararJogo(origem = 'stop') {
     if (!jogoAtivo) return;
     jogoAtivo = false;
     clearInterval(timerInterval);
@@ -791,6 +774,19 @@ const estadoServidor = {
     rodadaFinal: null
 };
 
+socket.off('votacaoIniciada');
+socket.off('votacaoAtualizada');
+socket.off('votacaoEncerrada');
+
+socket.on('rodadaEncerrada', () => {
+    jogoAtivo = false;
+    clearInterval(timerInterval);
+    categoriasRodada.forEach(c => {
+        const input = document.getElementById(c.id);
+        if (input) input.disabled = true;
+    });
+});
+
 socket.on('leaderboardAtualizado', (ranking) => {
     estadoServidor.leaderboard = ranking || [];
     renderLobby(estadoServidor.leaderboard);
@@ -901,14 +897,14 @@ function iniciarJogo(letraForcada = null, categoriasForcadas = null) {
     timerInterval = setInterval(() => {
         tempoRestante--;
         atualizarTimer();
-        if (tempoRestante <= 0) pararJogo();
+        if (tempoRestante <= 0) pararJogo('tempo');
     }, 1000);
 
     mostrarTela('tela-jogo');
     if (categoriasRodada[0]) document.getElementById(categoriasRodada[0].id)?.focus();
 }
 
-function pararJogo() {
+function pararJogo(origem = 'stop') {
     if (!jogoAtivo) return;
     jogoAtivo = false;
     clearInterval(timerInterval);
@@ -919,14 +915,18 @@ function pararJogo() {
         if (input) input.disabled = true;
     });
 
-    if (meuPin) {
-        socket.emit('enviarRespostas', {
+    if (meuPin && origem === 'stop') {
+        socket.emit('pressionarStop', {
             pin: meuPin,
             nome: meuNome,
             respostas: respostasJogo,
             rodada: rodadaAtual,
             letra: letraAtual
         });
+        return;
+    }
+
+    if (meuPin) {
         socket.emit('enviarRespostasRodada', {
             pin: meuPin,
             nome: meuNome,
@@ -934,6 +934,7 @@ function pararJogo() {
             rodada: rodadaAtual,
             letra: letraAtual
         });
+        return;
     }
 
     mostrarTela('tela-verificacao');
