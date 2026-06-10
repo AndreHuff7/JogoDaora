@@ -782,13 +782,30 @@ socket.off('votacaoIniciada');
 socket.off('votacaoAtualizada');
 socket.off('votacaoEncerrada');
 
-socket.on('rodadaEncerrada', () => {
+socket.on('rodadaParando', ({ por, nome }) => {
+    // The player who pressed STOP already handled this in pararJogo()
+    if (!jogoAtivo) return;
+
     jogoAtivo = false;
     clearInterval(timerInterval);
+
+    // Capture whatever is currently in the inputs — even if incomplete
+    const respostasParciais = {};
     categoriasRodada.forEach(c => {
         const input = document.getElementById(c.id);
+        respostasParciais[c.id] = input ? input.value.trim() : '';
         if (input) input.disabled = true;
     });
+    respostasJogo = respostasParciais;
+
+    // Submit immediately so the server can consolidate before advancing
+    socket.emit('enviarRespostas', { pin: meuPin, nome: meuNome, respostas: respostasParciais });
+
+    // Visual feedback while the grace window is open
+    const stopBtn = document.getElementById('btn-stop');
+    if (stopBtn) stopBtn.disabled = true;
+    const timerEl = document.getElementById('timer');
+    if (timerEl) { timerEl.textContent = 'STOP!'; timerEl.classList.remove('urgente'); }
 });
 
 socket.on('leaderboardAtualizado', (ranking) => {

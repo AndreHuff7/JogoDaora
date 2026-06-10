@@ -15,6 +15,7 @@ app.use(express.static(path.join(__dirname)));
 
 const salas = new Map();
 const TEMPO_VOTACAO_MS = 20000;
+const GRACE_WINDOW_MS  = 1500;
 
 function normalizarTexto(texto) {
     return String(texto || '')
@@ -261,7 +262,9 @@ function broadcastEstadoSala(pin) {
 function registrarRespostasRodada(socket, pin, nome, respostas) {
     const sala = salas.get(pin);
     if (!sala) return;
+    if (sala.fase !== 'jogando' && sala.fase !== 'parando') return;
     if (!sala.jogadores.some(j => j.id === socket.id)) return;
+    if (sala.respostasRodada[socket.id]) return;
 
     sala.respostasRodada[socket.id] = {
         id: socket.id,
@@ -273,6 +276,10 @@ function registrarRespostasRodada(socket, pin, nome, respostas) {
 
     const submetidos = sala.jogadores.filter(j => sala.respostasRodada[j.id]).length;
     if (submetidos === sala.jogadores.length) {
+        if (sala._stopTimer) {
+            clearTimeout(sala._stopTimer);
+            sala._stopTimer = null;
+        }
         iniciarVerificacaoRodada(pin, sala);
     }
 }
@@ -294,18 +301,40 @@ function encerrarRodadaPorStop(socket, pin, nome, respostas) {
         return;
     }
 
-    registrarRespostasRodada(socket, pin, nome, respostas);
+    sala.fase = 'parando';
+    sala.respostasRodada[socket.id] = {
+        id: socket.id,
+        nome: String(nome || '').trim().slice(0, 20),
+        respostas
+    };
 
-    if (sala.fase !== 'jogando') {
-        return;
+    io.to(pin).emit('rodadaParando', {
+        por: socket.id,
+        nome: String(nome || '').trim().slice(0, 20),
+        graceMs: GRACE_WINDOW_MS
+    });
+
+    sala._stopTimer = setTimeout(() => finalizarFaseParando(pin), GRACE_WINDOW_MS);
+
+    // Fast-path: all players had already submitted before STOP
+    const submetidos = sala.jogadores.filter(j => sala.respostasRodada[j.id]).length;
+    if (submetidos === sala.jogadores.length) {
+        clearTimeout(sala._stopTimer);
+        sala._stopTimer = null;
+        iniciarVerificacaoRodada(pin, sala);
     }
+}
 
+function finalizarFaseParando(pin) {
+    const sala = salas.get(pin);
+    if (!sala || sala.fase !== 'parando') return;
+    sala._stopTimer = null;
+
+    const categorias = sala.categoriasRodada || [];
     sala.jogadores.forEach(jogador => {
         if (!sala.respostasRodada[jogador.id]) {
             const respostasVazias = {};
-            categorias.forEach(c => {
-                respostasVazias[c.id] = '';
-            });
+            categorias.forEach(c => { respostasVazias[c.id] = ''; });
             sala.respostasRodada[jogador.id] = {
                 id: jogador.id,
                 nome: jogador.nome,
@@ -314,15 +343,14 @@ function encerrarRodadaPorStop(socket, pin, nome, respostas) {
         }
     });
 
-    io.to(pin).emit('rodadaEncerrada', {
-        por: socket.id,
-        nome: String(nome || '').trim().slice(0, 20)
-    });
-
     iniciarVerificacaoRodada(pin, sala);
 }
 
 function iniciarRodadaInterna(pin, sala) {
+    if (sala._stopTimer) {
+        clearTimeout(sala._stopTimer);
+        sala._stopTimer = null;
+    }
     sala.fase = 'jogando';
     sala.respostasRodada = {};
     sala.resultadosValidacao = {};
