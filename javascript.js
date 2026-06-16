@@ -51,12 +51,12 @@ let respostasRodadaSala = {};
 let categoriasRodada = [];
 let categoriasFila = [];
 let indiceVerificacaoAtual = 0;
-let votacaoTimerInterval = null;
+let categoriaTimerInterval = null;
 
 const estadoServidor = {
     leaderboard: [],
     verificacao: null,
-    votacaoAtual: null,
+    categoriaAtual: null,
     rodadaFinal: null,
     resultadosValidacao: {}
 };
@@ -331,8 +331,9 @@ function iniciarJogo(letraForcada = null, categoriasForcadas = null) {
     respostasRodadaSala = {};
     indiceVerificacaoAtual = 0;
     estadoServidor.verificacao = null;
-    estadoServidor.votacaoAtual = null;
+    estadoServidor.categoriaAtual = null;
     estadoServidor.resultadosValidacao = {};
+    clearInterval(categoriaTimerInterval);
 
     const stopBtn = document.getElementById('btn-stop');
     if (stopBtn) stopBtn.disabled = false;
@@ -464,19 +465,13 @@ function obterAutoresItem(item) {
 }
 
 function obterItensVerificacaoCategoria(categoriaId) {
-    const itensServidor = estadoServidor.verificacao?.itens || [];
+    const itensServidor = estadoServidor.categoriaAtual?.itens || [];
     return itensServidor
         .filter(item => item.catId === categoriaId)
-        .map(item => {
-            const resultado = estadoServidor.resultadosValidacao[item.key] || null;
-            return {
-                ...item,
-                autores: obterAutoresItem(item),
-                status: resultado ? (resultado.valido ? 'aceito' : 'negado') : 'pendente',
-                sim: resultado?.sim ?? 0,
-                nao: resultado?.nao ?? 0
-            };
-        });
+        .map(item => ({
+            ...item,
+            autores: obterAutoresItem(item)
+        }));
 }
 
 function agruparRespostasServidor(categoriaId) {
@@ -495,10 +490,36 @@ function obterRotuloValidacao(status) {
     return 'AGUARDANDO VOTO';
 }
 
+function obterStatusItem(item) {
+    if (item.valido === true) return 'aceito';
+    if (item.valido === false) return 'negado';
+    return 'pendente';
+}
+
+function obterVotosTotal(item) {
+    return (item.sim || 0) + (item.nao || 0);
+}
+
+function getClasseDestaque(item, maxVotos) {
+    const totalVotos = obterVotosTotal(item);
+    if (maxVotos === 0) return '';
+    if (totalVotos === maxVotos) return ' destaque';
+    return '';
+}
+
+function atualizarTimerCategoriaUI() {
+    const el = document.getElementById('ver-btn-avancar');
+    if (!el || !estadoServidor.categoriaAtual?.endsAt) return;
+    const restante = Math.max(0, Math.ceil((estadoServidor.categoriaAtual.endsAt - Date.now()) / 1000));
+    el.textContent = `Tempo: ${restante}s`;
+}
+
 function renderCategoriaVerificacao() {
     const categoriasVerificacao = estadoServidor.verificacao?.categorias || categoriasRodada;
     const total = categoriasVerificacao.length;
-    const categoria = categoriasVerificacao[indiceVerificacaoAtual];
+    const categoria = meuPin
+        ? estadoServidor.categoriaAtual?.categoria
+        : categoriasVerificacao[indiceVerificacaoAtual];
     const container = document.getElementById('ver-chips-container');
 
     if (!categoria || !container) return;
@@ -506,7 +527,7 @@ function renderCategoriaVerificacao() {
     const idx = document.getElementById('ver-progresso-idx');
     const ttl = document.getElementById('ver-progresso-total');
     const nome = document.getElementById('ver-categoria-nome');
-    if (idx) idx.textContent = String(indiceVerificacaoAtual + 1);
+    if (idx) idx.textContent = String(meuPin ? ((estadoServidor.categoriaAtual?.indice ?? 0) + 1) : (indiceVerificacaoAtual + 1));
     if (ttl) ttl.textContent = String(total);
     if (nome) nome.textContent = categoria.label.toUpperCase();
 
@@ -521,19 +542,25 @@ function renderCategoriaVerificacao() {
             : '<div class="ver-vazio">Sem respostas</div>';
     } else {
         const respostas = agruparRespostasServidor(categoria.id);
+        const maxVotos = respostas.reduce((max, item) => Math.max(max, obterVotosTotal(item)), 0);
         container.innerHTML = respostas.length
             ? respostas.map(item => {
-                const classe = obterClasseValidacao(item.status);
-                const ativo = estadoServidor.votacaoAtual?.item?.key === item.key;
-                const votos = item.status === 'pendente'
-                    ? ''
-                    : `<span class="vot-info">${item.sim}✓ ${item.nao}✗</span>`;
+                const status = obterStatusItem(item);
+                const classe = obterClasseValidacao(status);
+                const votos = `<span class="vot-info">${item.sim || 0}✓ ${item.nao || 0}✗ · ${obterVotosTotal(item)} votos</span>`;
+                const votei = Object.prototype.hasOwnProperty.call(item.votos || {}, socket.id);
+                const desabilitado = item.encerrada ? 'disabled' : (votei ? 'disabled' : '');
+                const classeFinalizada = item.encerrada ? ' encerrada' : '';
                 return `
-                    <div class="ver-chip-wrapper${ativo ? ' ativo' : ''}">
+                    <div class="ver-chip-wrapper item-votacao${classeFinalizada}${getClasseDestaque(item, maxVotos)}">
                         <span class="resposta-chip ${classe}">${escaparHtml(item.texto)}</span>
-                        <span class="chip-label-status">${obterRotuloValidacao(item.status)}</span>
+                        <span class="chip-label-status">${obterRotuloValidacao(status)}</span>
                         <span class="ver-autores">${escaparHtml(item.autores.join(', '))}</span>
                         ${votos}
+                        <div class="voto-acoes">
+                            <button class="voto-item-btn voto-item-sim" onclick="votarItemValidacao('${item.key}', true)" ${desabilitado}>Válido</button>
+                            <button class="voto-item-btn voto-item-nao" onclick="votarItemValidacao('${item.key}', false)" ${desabilitado}>Inválido</button>
+                        </div>
                     </div>`;
             }).join('')
             : '<div class="ver-vazio">Sem respostas</div>';
@@ -541,19 +568,26 @@ function renderCategoriaVerificacao() {
 
     const prev = document.getElementById('ver-btn-prev');
     const avancar = document.getElementById('ver-btn-avancar');
-    if (prev) prev.style.visibility = indiceVerificacaoAtual > 0 ? 'visible' : 'hidden';
+    if (prev) prev.style.visibility = !meuPin && indiceVerificacaoAtual > 0 ? 'visible' : 'hidden';
     if (avancar) {
         if (!meuPin) {
             avancar.textContent = indiceVerificacaoAtual < total - 1 ? '→' : 'CONFIRMAR';
-        } else if (estadoServidor.votacaoAtual) {
-            avancar.textContent = indiceVerificacaoAtual < total - 1 ? '→' : 'AGUARDANDO';
         } else {
-            avancar.textContent = indiceVerificacaoAtual < total - 1 ? '→' : 'CONFIRMAR';
+            avancar.textContent = 'Tempo: --s';
         }
+    }
+
+    if (meuPin) {
+        clearInterval(categoriaTimerInterval);
+        atualizarTimerCategoriaUI();
+        categoriaTimerInterval = setInterval(() => {
+            atualizarTimerCategoriaUI();
+        }, 250);
     }
 }
 
 function navVerificacao(delta) {
+    if (meuPin) return;
     const total = (estadoServidor.verificacao?.categorias || categoriasRodada).length;
     if (total === 0) return;
     if (delta > 0 && indiceVerificacaoAtual >= total - 1) {
@@ -565,78 +599,15 @@ function navVerificacao(delta) {
 }
 
 function mostrarPainelVotacao(item, duracao, totalJogadores, endsAt) {
-    const painel = document.getElementById('painel-votacao');
-    if (!painel || !item) return;
-
-    painel.innerHTML = `
-        <div class="vot-overlay">
-            <div class="vot-card">
-                <div class="vot-categoria">${escaparHtml(item.categoria || '')}</div>
-                <div class="vot-resposta">${escaparHtml(item.texto || '')}</div>
-                <div class="vot-timer" id="vot-timer">${duracao}</div>
-                <div class="vot-contagem" id="vot-contagem">0/${totalJogadores || 0} votaram</div>
-                <div class="vot-botoes" id="vot-botoes">
-                    <button class="vot-btn vot-sim" onclick="votarPalavra('${item.catId}','${normalizarTexto(item.texto)}',true)">✓ VÁLIDA</button>
-                    <button class="vot-btn vot-nao" onclick="votarPalavra('${item.catId}','${normalizarTexto(item.texto)}',false)">✗ INVÁLIDA</button>
-                </div>
-                <div class="vot-resultado" id="vot-resultado" style="display:none"></div>
-            </div>
-        </div>`;
-
-    painel.style.display = 'block';
-
-    clearInterval(votacaoTimerInterval);
-    votacaoTimerInterval = setInterval(() => {
-        const restante = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
-        const el = document.getElementById('vot-timer');
-        if (el) el.textContent = String(restante);
-        if (restante <= 0) {
-            clearInterval(votacaoTimerInterval);
-        }
-    }, 1000);
+    return;
 }
 
 function atualizarContadorVotos(itemId, votos, totalJogadores) {
-    if (estadoServidor.votacaoAtual?.item?.key !== itemId) return;
-
-    const el = document.getElementById('vot-contagem');
-    if (!el) return;
-    const sim = Object.values(votos || {}).filter(Boolean).length;
-    const nao = Object.values(votos || {}).filter(voto => !voto).length;
-    el.textContent = `${sim + nao}/${totalJogadores || 0} votaram · ✓ ${sim} · ✗ ${nao}`;
-
-    const botoes = document.getElementById('vot-botoes');
-    if (botoes && Object.prototype.hasOwnProperty.call(votos || {}, socket.id)) {
-        botoes.querySelectorAll('.vot-btn').forEach(botao => {
-            botao.disabled = true;
-        });
-    }
+    return;
 }
 
 function mostrarResultadoVotacao(itemId, sim, nao, aceito) {
-    const res = document.getElementById('vot-resultado');
-    const bots = document.getElementById('vot-botoes');
-    const timer = document.getElementById('vot-timer');
-    const painel = document.getElementById('painel-votacao');
-
-    clearInterval(votacaoTimerInterval);
-
-    if (timer) timer.textContent = '0';
-    if (bots) bots.style.display = 'none';
-    if (res) {
-        res.style.display = 'block';
-        res.innerHTML = `
-            <div class="vot-veredicto ${aceito ? 'vot-aceito' : 'vot-negado'}">${aceito ? '✓ ACEITA' : '✗ REJEITADA'}</div>
-            <div class="vot-placar">${sim} ✓ &nbsp; ${nao} ✗</div>`;
-    }
-
-    setTimeout(() => {
-        if (painel) painel.style.display = 'none';
-        if (estadoServidor.votacaoAtual?.item?.key === itemId) {
-            estadoServidor.votacaoAtual = null;
-        }
-        renderCategoriaVerificacao();
-    }, 1500);
+    return;
 }
 
 function votarPalavra(catId, chave, aceito) {
@@ -644,6 +615,15 @@ function votarPalavra(catId, chave, aceito) {
     socket.emit('votarPalavra', {
         pin: meuPin,
         itemId: `${catId}__${chave}`,
+        aceito
+    });
+}
+
+function votarItemValidacao(itemId, aceito) {
+    if (!meuPin) return;
+    socket.emit('votarPalavra', {
+        pin: meuPin,
+        itemId,
         aceito
     });
 }
@@ -800,9 +780,10 @@ function reiniciar() {
     respostasRodadaSala = {};
     indiceVerificacaoAtual = 0;
     estadoServidor.verificacao = null;
-    estadoServidor.votacaoAtual = null;
+    estadoServidor.categoriaAtual = null;
     estadoServidor.rodadaFinal = null;
     estadoServidor.resultadosValidacao = {};
+    clearInterval(categoriaTimerInterval);
     mostrarTela(meuPin ? 'tela-sala' : 'tela-nome');
 }
 
@@ -958,9 +939,10 @@ socket.on('leaderboardAtualizado', ranking => {
 
 socket.on('iniciarVerificacao', payload => {
     estadoServidor.verificacao = payload || null;
-    estadoServidor.votacaoAtual = null;
+    estadoServidor.categoriaAtual = null;
     estadoServidor.resultadosValidacao = {};
     indiceVerificacaoAtual = 0;
+    clearInterval(categoriaTimerInterval);
     debugLog('iniciarVerificacao', {
         rodadaAtual: payload?.rodadaAtual,
         letraAtual: payload?.letraAtual,
@@ -978,52 +960,59 @@ socket.on('iniciarVerificacao', payload => {
     mostrarTela('tela-verificacao');
 });
 
-socket.on('votacaoIniciada', ({ item, duracao, totalJogadores, startedAt, endsAt }) => {
-    estadoServidor.votacaoAtual = {
-        item,
-        duracao,
-        totalJogadores,
-        votos: {},
-        startedAt,
-        endsAt
+socket.on('categoriaVerificacaoIniciada', payload => {
+    estadoServidor.categoriaAtual = {
+        ...payload,
+        itens: [...(payload?.itens || [])]
     };
-    debugLog('votacaoIniciada', {
-        item,
-        duracao,
-        totalJogadores
+    indiceVerificacaoAtual = payload?.indice || 0;
+    debugLog('categoriaVerificacaoIniciada', {
+        indice: payload?.indice,
+        categoria: payload?.categoria,
+        totalItens: (payload?.itens || []).length,
+        totalJogadores: payload?.totalJogadores
     });
-    mostrarPainelVotacao(item, duracao, totalJogadores, endsAt);
     renderCategoriaVerificacao();
 });
 
-socket.on('votacaoAtualizada', ({ itemId, votos, totalJogadores }) => {
-    if (estadoServidor.votacaoAtual?.item?.key !== itemId) return;
-    estadoServidor.votacaoAtual.votos = votos || {};
-    atualizarContadorVotos(itemId, votos || {}, totalJogadores);
+socket.on('votacaoItemAtualizada', ({ itemId, votos, sim, nao, totalJogadores }) => {
+    const item = estadoServidor.categoriaAtual?.itens?.find(i => i.key === itemId);
+    if (!item) return;
+    item.votos = votos || {};
+    item.sim = sim ?? Object.values(item.votos).filter(Boolean).length;
+    item.nao = nao ?? Object.values(item.votos).filter(v => !v).length;
+    debugLog('votacaoItemAtualizada', { itemId, sim: item.sim, nao: item.nao, totalJogadores });
+    renderCategoriaVerificacao();
 });
 
-socket.on('votacaoEncerrada', ({ itemId, sim, nao, aceito }) => {
-    const item = estadoServidor.votacaoAtual?.item;
-    if (item?.key === itemId) {
+socket.on('votacaoItemEncerrada', ({ itemId, sim, nao, aceito }) => {
+    const item = estadoServidor.categoriaAtual?.itens?.find(i => i.key === itemId);
+    if (item) {
+        item.sim = sim;
+        item.nao = nao;
+        item.valido = aceito;
+        item.encerrada = true;
         estadoServidor.resultadosValidacao[itemId] = {
             ...item,
             sim,
             nao,
             valido: aceito,
-            votos: { ...(estadoServidor.votacaoAtual.votos || {}) }
+            votos: { ...(item.votos || {}) }
         };
     }
-    debugLog('votacaoEncerrada', {
-        itemId,
-        sim,
-        nao,
-        aceito,
-        item
-    });
-    mostrarResultadoVotacao(itemId, sim, nao, aceito);
+    debugLog('votacaoItemEncerrada', { itemId, sim, nao, aceito });
+    renderCategoriaVerificacao();
+});
+
+socket.on('categoriaVerificacaoEncerrada', ({ categoriaId, indice, totalCategorias }) => {
+    debugLog('categoriaVerificacaoEncerrada', { categoriaId, indice, totalCategorias });
+    clearInterval(categoriaTimerInterval);
+    const avancar = document.getElementById('ver-btn-avancar');
+    if (avancar) avancar.textContent = 'Aguardando próxima categoria...';
 });
 
 socket.on('rodadaFinalizada', payload => {
+    clearInterval(categoriaTimerInterval);
     estadoServidor.rodadaFinal = payload || null;
     estadoServidor.leaderboard = payload?.ranking || [];
     renderResultadoRodada(payload);

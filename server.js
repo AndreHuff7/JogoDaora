@@ -64,6 +64,8 @@ function criarEstadoSala(pin, hostId, hostNome) {
         filaValidacao: [],
         resultadosValidacao: {},
         votacaoAtiva: null,
+        verificacaoCategoria: null,
+        votacoesCategoria: {},
         fase: 'lobby',
         config: {
             categorias: [],
@@ -146,62 +148,174 @@ function montarFilaValidacao(sala) {
     sala.votacaoAtiva = null;
 }
 
-function finalizarVotacaoItem(pin) {
-    const sala = salas.get(pin);
-    if (!sala || !sala.votacaoAtiva) return;
+function obterItensCategoriaValidacao(sala, categoriaId) {
+    return (sala.itensVerificacao || []).filter(item => item.catId === categoriaId);
+}
 
-    const atual = sala.votacaoAtiva;
-    if (atual.timer) clearTimeout(atual.timer);
+function finalizarItemVotacaoCategoria(pin, sala, itemId) {
+    if (!sala || !sala.votacoesCategoria[itemId]) return;
+    const atual = sala.votacoesCategoria[itemId];
+    if (atual.encerrada) return;
 
     const sim = Object.values(atual.votos).filter(Boolean).length;
     const nao = Object.values(atual.votos).filter(v => !v).length;
     const aceito = sim >= nao;
 
-    const item = sala.itensVerificacao.find(i => i.key === atual.key) || {
+    atual.sim = sim;
+    atual.nao = nao;
+    atual.valido = aceito;
+    atual.encerrada = true;
+
+    sala.resultadosValidacao[itemId] = {
         key: atual.key,
         catId: atual.catId,
         categoria: atual.categoria,
         emoji: atual.emoji,
         texto: atual.texto,
         donos: atual.donos,
-        quantidade: atual.quantidade
-    };
-
-    sala.resultadosValidacao[atual.key] = {
-        ...item,
+        quantidade: atual.quantidade,
         sim,
         nao,
         valido: aceito,
         votos: { ...atual.votos }
     };
 
-    debugLog('votacao finalizada', {
+    debugLog('votacao item finalizada', {
         pin,
-        item: atual.key,
+        item: itemId,
         texto: atual.texto,
         sim,
         nao,
         aceito,
-        restantesNaFila: sala.filaValidacao.length
+        categoria: atual.catId
     });
 
-    sala.votacaoAtiva = null;
-
-    io.to(pin).emit('votacaoEncerrada', {
-        itemId: atual.key,
+    io.to(pin).emit('votacaoItemEncerrada', {
+        itemId,
         catId: atual.catId,
-        chave: atual.key,
+        chave: itemId,
         sim,
         nao,
         aceito
     });
+}
 
-    if (sala.filaValidacao.length > 0) {
-        setTimeout(() => iniciarProximaVotacao(pin, sala), 750);
+function todasVotacoesCategoriaEncerradas(sala) {
+    return Object.values(sala.votacoesCategoria || {}).every(item => item.encerrada);
+}
+
+function irParaProximaCategoriaVerificacao(pin, sala) {
+    if (!sala || !sala.verificacaoCategoria) return;
+    const proximoIndice = sala.verificacaoCategoria.indice + 1;
+    iniciarCategoriaVerificacao(pin, sala, proximoIndice);
+}
+
+function encerrarCategoriaVerificacao(pin, sala) {
+    if (!sala || !sala.verificacaoCategoria) return;
+
+    const categoriaAtual = sala.verificacaoCategoria;
+    if (categoriaAtual.timer) {
+        clearTimeout(categoriaAtual.timer);
+    }
+
+    Object.keys(sala.votacoesCategoria || {}).forEach(itemId => {
+        if (!sala.votacoesCategoria[itemId].encerrada) {
+            finalizarItemVotacaoCategoria(pin, sala, itemId);
+        }
+    });
+
+    io.to(pin).emit('categoriaVerificacaoEncerrada', {
+        categoriaId: categoriaAtual.categoria.id,
+        indice: categoriaAtual.indice,
+        totalCategorias: sala.categoriasRodada.length
+    });
+
+    sala.verificacaoCategoria = null;
+    sala.votacoesCategoria = {};
+
+    if (categoriaAtual.indice >= sala.categoriasRodada.length - 1) {
+        calcularPontuacaoRodada(pin);
         return;
     }
 
-    calcularPontuacaoRodada(pin);
+    setTimeout(() => irParaProximaCategoriaVerificacao(pin, sala), 600);
+}
+
+function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
+    if (!sala) return;
+
+    const categoria = sala.categoriasRodada[indiceCategoria];
+    if (!categoria) {
+        calcularPontuacaoRodada(pin);
+        return;
+    }
+
+    const itensCategoria = obterItensCategoriaValidacao(sala, categoria.id);
+    const endsAt = Date.now() + TEMPO_VOTACAO_MS;
+
+    sala.votacoesCategoria = {};
+    itensCategoria.forEach(item => {
+        sala.votacoesCategoria[item.key] = {
+            ...item,
+            votos: {},
+            encerrada: false,
+            sim: 0,
+            nao: 0,
+            valido: null
+        };
+    });
+
+    const timer = setTimeout(() => {
+        const atual = salas.get(pin);
+        if (!atual) return;
+        if (!atual.verificacaoCategoria) return;
+        if (atual.verificacaoCategoria.indice !== indiceCategoria) return;
+        encerrarCategoriaVerificacao(pin, atual);
+    }, TEMPO_VOTACAO_MS);
+
+    sala.verificacaoCategoria = {
+        indice: indiceCategoria,
+        categoria,
+        startedAt: Date.now(),
+        endsAt,
+        timer
+    };
+
+    debugLog('categoria verificacao iniciada', {
+        pin,
+        indice: indiceCategoria,
+        categoria: categoria.id,
+        totalItens: itensCategoria.length,
+        itens: itensCategoria.map(item => ({ key: item.key, texto: item.texto, donos: item.donos }))
+    });
+
+    io.to(pin).emit('categoriaVerificacaoIniciada', {
+        indice: indiceCategoria,
+        totalCategorias: sala.categoriasRodada.length,
+        categoria,
+        duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
+        startedAt: sala.verificacaoCategoria.startedAt,
+        endsAt,
+        totalJogadores: sala.jogadores.length,
+        itens: itensCategoria.map(item => ({
+            key: item.key,
+            catId: item.catId,
+            categoria: item.categoria,
+            emoji: item.emoji,
+            texto: item.texto,
+            donos: item.donos,
+            quantidade: item.quantidade,
+            votos: {},
+            sim: 0,
+            nao: 0,
+            encerrada: false,
+            valido: null
+        }))
+    });
+
+    if (itensCategoria.length === 0) {
+        encerrarCategoriaVerificacao(pin, sala);
+    }
 }
 
 function calcularPontuacaoRodada(pin) {
@@ -399,6 +513,8 @@ function iniciarRodadaInterna(pin, sala) {
     sala.resultadosValidacao = {};
     sala.filaValidacao = [];
     sala.votacaoAtiva = null;
+    sala.verificacaoCategoria = null;
+    sala.votacoesCategoria = {};
     sala.rodadaAtual = (sala.rodadaAtual || 0) + 1;
 
     const letras = sala.config.letras?.length ? sala.config.letras : [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
@@ -442,64 +558,11 @@ function iniciarVerificacaoRodada(pin, sala) {
         itens: sala.itensVerificacao,
         ranking: obterRankingSala(sala)
     });
-    if (sala.filaValidacao.length === 0) {
+    if (sala.itensVerificacao.length === 0) {
         calcularPontuacaoRodada(pin);
         return;
     }
-    iniciarProximaVotacao(pin, sala);
-}
-
-function iniciarProximaVotacao(pin, sala) {
-    if (sala.votacaoAtiva?.timer) clearTimeout(sala.votacaoAtiva.timer);
-    const proxima = sala.filaValidacao.shift();
-    if (!proxima) {
-        calcularPontuacaoRodada(pin);
-        return;
-    }
-
-    debugLog('proxima votacao', {
-        pin,
-        key: proxima.key,
-        categoria: proxima.categoria,
-        texto: proxima.texto,
-        donos: proxima.donos,
-        restantesNaFila: sala.filaValidacao.length
-    });
-
-    sala.votacaoAtiva = {
-        ...proxima,
-        votos: {},
-        timer: null,
-        startedAt: Date.now(),
-        endsAt: Date.now() + TEMPO_VOTACAO_MS
-    };
-
-    sala.votacaoAtiva.timer = setTimeout(() => {
-        if (salas.has(pin)) {
-            const atual = salas.get(pin);
-            if (atual?.votacaoAtiva?.key === proxima.key) {
-                finalizarVotacaoItem(pin);
-            }
-        }
-    }, TEMPO_VOTACAO_MS);
-
-    io.to(pin).emit('votacaoIniciada', {
-        catId: proxima.catId,
-        chave: proxima.key,
-        startedAt: sala.votacaoAtiva.startedAt,
-        endsAt: sala.votacaoAtiva.endsAt,
-        item: {
-            key: proxima.key,
-            catId: proxima.catId,
-            categoria: proxima.categoria,
-            emoji: proxima.emoji,
-            texto: proxima.texto,
-            donos: proxima.donos,
-            quantidade: proxima.quantidade
-        },
-        duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
-        totalJogadores: sala.jogadores.length
-    });
+    iniciarCategoriaVerificacao(pin, sala, 0);
 }
 
 function reconciliarSalaAposSaida(pin, sala) {
@@ -523,16 +586,18 @@ function reconciliarSalaAposSaida(pin, sala) {
         }
     }
 
-    if (sala.fase === 'verificacao' && sala.votacaoAtiva) {
-        const totalVotos = Object.keys(sala.votacaoAtiva.votos).length;
-        if (totalVotos >= sala.jogadores.length) {
-            debugLog('finalizando votacao apos saida', {
-                pin,
-                item: sala.votacaoAtiva.key,
-                totalVotos,
-                totalJogadores: sala.jogadores.length
-            });
-            finalizarVotacaoItem(pin);
+    if (sala.fase === 'verificacao' && sala.verificacaoCategoria) {
+        Object.keys(sala.votacoesCategoria || {}).forEach(itemId => {
+            const item = sala.votacoesCategoria[itemId];
+            if (item.encerrada) return;
+            const totalVotos = Object.keys(item.votos).length;
+            if (totalVotos >= sala.jogadores.length) {
+                finalizarItemVotacaoCategoria(pin, sala, itemId);
+            }
+        });
+
+        if (todasVotacoesCategoriaEncerradas(sala)) {
+            encerrarCategoriaVerificacao(pin, sala);
         }
     }
 }
@@ -632,25 +697,36 @@ io.on('connection', (socket) => {
         const sala = salas.get(pin);
         if (!sala) return;
         if (!sala.jogadores.some(j => j.id === socket.id)) return;
+        if (sala.fase !== 'verificacao') return;
 
         const itemIdResolvido = itemId || (catId && chave ? `${catId}__${chave}` : null);
         if (!itemIdResolvido) return;
-        if (!sala.votacaoAtiva || sala.votacaoAtiva.key !== itemIdResolvido) return;
-        if (Object.prototype.hasOwnProperty.call(sala.votacaoAtiva.votos, socket.id)) return;
+        const votoItem = sala.votacoesCategoria[itemIdResolvido];
+        if (!votoItem) return;
+        if (votoItem.encerrada) return;
+        if (Object.prototype.hasOwnProperty.call(votoItem.votos, socket.id)) return;
 
-        sala.votacaoAtiva.votos[socket.id] = Boolean(aceito);
+        votoItem.votos[socket.id] = Boolean(aceito);
+        votoItem.sim = Object.values(votoItem.votos).filter(Boolean).length;
+        votoItem.nao = Object.values(votoItem.votos).filter(v => !v).length;
 
-        io.to(pin).emit('votacaoAtualizada', {
+        io.to(pin).emit('votacaoItemAtualizada', {
             itemId: itemIdResolvido,
-            catId: sala.votacaoAtiva.catId,
+            catId: votoItem.catId,
             chave: itemIdResolvido,
-            votos: sala.votacaoAtiva.votos,
+            votos: votoItem.votos,
+            sim: votoItem.sim,
+            nao: votoItem.nao,
             totalJogadores: sala.jogadores.length
         });
 
-        const totalVotos = Object.keys(sala.votacaoAtiva.votos).length;
+        const totalVotos = Object.keys(votoItem.votos).length;
         if (totalVotos >= sala.jogadores.length) {
-            finalizarVotacaoItem(pin);
+            finalizarItemVotacaoCategoria(pin, sala, itemIdResolvido);
+        }
+
+        if (todasVotacoesCategoriaEncerradas(sala)) {
+            encerrarCategoriaVerificacao(pin, sala);
         }
     });
 
@@ -659,9 +735,8 @@ io.on('connection', (socket) => {
         const sala = salas.get(pin);
         if (!sala) return;
         if (sala.hostId !== socket.id) return;
-        if (sala.votacaoAtiva) return;
-        if (!sala.filaValidacao || sala.filaValidacao.length > 0) return;
-        calcularPontuacaoRodada(pin);
+        if (sala.fase !== 'verificacao') return;
+        encerrarCategoriaVerificacao(pin, sala);
     });
 
     socket.on('chatMsg', ({ pin, nome, msg }) => {

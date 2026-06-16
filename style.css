@@ -355,42 +355,48 @@ button:active { transform: scale(.97); }
   text-shadow: 0 2px 18px rgba(250,204,21,.25);
 }
 #ver-chips-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: .7rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: .9rem;
   min-height: 130px;
-  justify-content: center;
+  align-items: stretch;
 }
 .ver-chip-wrapper {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: .3rem;
-  cursor: pointer;
+  align-items: stretch;
+  gap: .45rem;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(148,163,184,.2);
+  border-radius: 14px;
+  padding: .85rem;
+  transition: transform .18s ease, box-shadow .2s ease, border-color .2s ease;
 }
 .ver-chip-wrapper .resposta-chip {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 900;
-  padding: .8rem 2.5rem;
+  padding: .75rem 1rem;
   border-radius: 999px;
   letter-spacing: .07em;
-  transition: transform .1s, box-shadow .15s;
+  transition: transform .18s ease, box-shadow .18s ease, background .2s ease;
   user-select: none;
+  text-align: center;
 }
 .ver-chip-wrapper:hover .resposta-chip {
-  transform: scale(1.05);
-  box-shadow: 0 6px 22px rgba(0,0,0,.4);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0,0,0,.32);
 }
 .ver-chip-wrapper .resposta-chip.aceito {
   background: #4ade80;
   color: #052e16;
   border: none;
+  animation: pulseAceito .45s ease;
 }
 .ver-chip-wrapper .resposta-chip.negado {
   background: rgba(148,163,184,.18);
   color: rgba(241,245,249,.45);
   border: 1.5px solid rgba(148,163,184,.28);
+  animation: pulseNegado .45s ease;
 }
 .ver-chip-wrapper .resposta-chip.pendente {
   background: rgba(250,204,21,.18);
@@ -410,6 +416,56 @@ button:active { transform: scale(.97); }
   letter-spacing: .18em;
   color: var(--cor-suave);
   text-transform: uppercase;
+  text-align: center;
+}
+.item-votacao {
+  animation: cardIn .28s ease;
+}
+.item-votacao.destaque {
+  border-color: rgba(250,204,21,.45);
+  box-shadow: 0 0 0 1px rgba(250,204,21,.24), 0 8px 22px rgba(0,0,0,.25);
+}
+.item-votacao.encerrada {
+  border-color: rgba(148,163,184,.35);
+  background: rgba(148,163,184,.07);
+}
+.voto-acoes {
+  display: flex;
+  gap: .45rem;
+  margin-top: .3rem;
+}
+.voto-item-btn {
+  all: unset;
+  flex: 1;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 10px;
+  padding: .48rem .4rem;
+  font-size: .8rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  transition: transform .12s ease, filter .12s ease, box-shadow .18s ease, opacity .18s ease;
+}
+.voto-item-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+.voto-item-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+.voto-item-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.voto-item-sim {
+  background: rgba(34,197,94,.2);
+  color: #86efac;
+  border: 1px solid rgba(34,197,94,.5);
+}
+.voto-item-nao {
+  background: rgba(239,68,68,.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239,68,68,.5);
 }
 .ver-nav {
   display: flex;
@@ -488,7 +544,8 @@ em.vazio { color: var(--cor-suave); font-style: italic; font-weight: 400; }
   color: var(--cor-suave);
   font-style: italic;
   text-align: center;
-  padding: .5rem 0;
+  padding: 1rem 0;
+  grid-column: 1 / -1;
 }
 
 /* ── Placar jogadores por rodada ────────────── */
@@ -633,6 +690,21 @@ em.vazio { color: var(--cor-suave); font-style: italic; font-weight: 400; }
 }
 .ver-chip-wrapper.ativo .resposta-chip {
   box-shadow: 0 0 0 2px rgba(250,204,21,.35);
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulseAceito {
+  0% { box-shadow: 0 0 0 0 rgba(74,222,128,.6); }
+  100% { box-shadow: 0 0 0 8px rgba(74,222,128,0); }
+}
+
+@keyframes pulseNegado {
+  0% { box-shadow: 0 0 0 0 rgba(248,113,113,.55); }
+  100% { box-shadow: 0 0 0 8px rgba(248,113,113,0); }
 }
 
 /* ── Layout 2 colunas do lobby ─────────────── */
