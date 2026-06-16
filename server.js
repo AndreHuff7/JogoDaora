@@ -10,12 +10,18 @@ const server = http.createServer(app);
 const io     = new Server(server);
 
 const PORT = process.env.PORT || 3001;
+const DEBUG_STOP = process.env.DEBUG_STOP === '1';
 
 app.use(express.static(path.join(__dirname)));
 
 const salas = new Map();
 const TEMPO_VOTACAO_MS = 20000;
 const GRACE_WINDOW_MS  = 1500;
+
+function debugLog(...args) {
+    if (!DEBUG_STOP) return;
+    console.log('[DEBUG_STOP]', ...args);
+}
 
 function normalizarTexto(texto) {
     return String(texto || '')
@@ -169,6 +175,16 @@ function finalizarVotacaoItem(pin) {
         votos: { ...atual.votos }
     };
 
+    debugLog('votacao finalizada', {
+        pin,
+        item: atual.key,
+        texto: atual.texto,
+        sim,
+        nao,
+        aceito,
+        restantesNaFila: sala.filaValidacao.length
+    });
+
     sala.votacaoAtiva = null;
 
     io.to(pin).emit('votacaoEncerrada', {
@@ -212,6 +228,14 @@ function calcularPontuacaoRodada(pin) {
 
     sala.jogadores.forEach(jogador => {
         sala.pontuacoes[jogador.id] = (sala.pontuacoes[jogador.id] || 0) + (pontuacaoRodada[jogador.id] || 0);
+    });
+
+    debugLog('pontuacao rodada', {
+        pin,
+        rodada: sala.rodadaAtual,
+        letra: sala.letraAtual,
+        pontuacaoRodada,
+        resultados: sala.resultadosValidacao
     });
 
     sala.historicoRodadas.push({
@@ -272,6 +296,16 @@ function registrarRespostasRodada(socket, pin, nome, respostas) {
         respostas
     };
 
+    debugLog('resposta registrada', {
+        pin,
+        jogador: socket.id,
+        nome: String(nome || '').trim().slice(0, 20),
+        fase: sala.fase,
+        totalRecebidas: Object.keys(sala.respostasRodada).length,
+        totalJogadores: sala.jogadores.length,
+        respostas
+    });
+
     io.to(pin).emit('respostasRodadaAtualizadas', { respostas: sala.respostasRodada });
 
     const submetidos = sala.jogadores.filter(j => sala.respostasRodada[j.id]).length;
@@ -307,6 +341,15 @@ function encerrarRodadaPorStop(socket, pin, nome, respostas) {
         nome: String(nome || '').trim().slice(0, 20),
         respostas
     };
+
+    debugLog('stop acionado', {
+        pin,
+        jogador: socket.id,
+        nome: String(nome || '').trim().slice(0, 20),
+        respostas,
+        totalRecebidas: Object.keys(sala.respostasRodada).length,
+        totalJogadores: sala.jogadores.length
+    });
 
     io.to(pin).emit('rodadaParando', {
         por: socket.id,
@@ -375,6 +418,22 @@ function iniciarRodadaInterna(pin, sala) {
 function iniciarVerificacaoRodada(pin, sala) {
     sala.fase = 'verificacao';
     montarFilaValidacao(sala);
+
+    debugLog('verificacao iniciada', {
+        pin,
+        rodada: sala.rodadaAtual,
+        letra: sala.letraAtual,
+        totalSubmissoes: Object.keys(sala.respostasRodada).length,
+        totalItens: sala.itensVerificacao.length,
+        itens: sala.itensVerificacao.map(item => ({
+            key: item.key,
+            categoria: item.categoria,
+            texto: item.texto,
+            donos: item.donos,
+            quantidade: item.quantidade
+        }))
+    });
+
     io.to(pin).emit('iniciarVerificacao', {
         rodadaAtual: sala.rodadaAtual,
         letraAtual: sala.letraAtual,
@@ -394,9 +453,18 @@ function iniciarProximaVotacao(pin, sala) {
     if (sala.votacaoAtiva?.timer) clearTimeout(sala.votacaoAtiva.timer);
     const proxima = sala.filaValidacao.shift();
     if (!proxima) {
-        finalizarRodada(pin, sala);
+        calcularPontuacaoRodada(pin);
         return;
     }
+
+    debugLog('proxima votacao', {
+        pin,
+        key: proxima.key,
+        categoria: proxima.categoria,
+        texto: proxima.texto,
+        donos: proxima.donos,
+        restantesNaFila: sala.filaValidacao.length
+    });
 
     sala.votacaoAtiva = {
         ...proxima,
@@ -434,44 +502,39 @@ function iniciarProximaVotacao(pin, sala) {
     });
 }
 
-function encerrarVotacaoAtual(pin, sala) {
-    if (!sala?.votacaoAtiva) return;
-    finalizarVotacaoItem(pin);
-}
+function reconciliarSalaAposSaida(pin, sala) {
+    if (!sala) return;
 
-function finalizarRodada(pin, sala) {
-    const pontuacaoRodada = {};
-    sala.jogadores.forEach(j => {
-        pontuacaoRodada[j.id] = 0;
-    });
+    if ((sala.fase === 'jogando' || sala.fase === 'parando')) {
+        const submetidos = sala.jogadores.filter(j => sala.respostasRodada[j.id]).length;
+        if (submetidos === sala.jogadores.length) {
+            if (sala._stopTimer) {
+                clearTimeout(sala._stopTimer);
+                sala._stopTimer = null;
+            }
+            debugLog('reconciliando rodada apos saida', {
+                pin,
+                fase: sala.fase,
+                submetidos,
+                totalJogadores: sala.jogadores.length
+            });
+            iniciarVerificacaoRodada(pin, sala);
+            return;
+        }
+    }
 
-    Object.values(sala.resultadosValidacao || {}).forEach(resultado => {
-        const pontos = resultado.valido ? (resultado.quantidade > 1 ? 5 : 10) : 0;
-        resultado.donos.forEach(id => {
-            pontuacaoRodada[id] = (pontuacaoRodada[id] || 0) + pontos;
-        });
-    });
-
-    sala.jogadores.forEach(j => {
-        sala.pontuacoes[j.id] = (sala.pontuacoes[j.id] || 0) + (pontuacaoRodada[j.id] || 0);
-    });
-
-    sala.historicoRodadas.push({
-        rodada: sala.rodadaAtual,
-        letra: sala.letraAtual,
-        pontuacaoRodada: { ...pontuacaoRodada }
-    });
-
-    sala.fase = 'resultado';
-    emitirJogadores(pin);
-    io.to(pin).emit('resultadoRodada', {
-        rodadaAtual: sala.rodadaAtual,
-        letraAtual: sala.letraAtual,
-        pontuacaoRodada,
-        ranking: obterRankingSala(sala),
-        historicoRodadas: sala.historicoRodadas,
-        pontuacoes: sala.pontuacoes
-    });
+    if (sala.fase === 'verificacao' && sala.votacaoAtiva) {
+        const totalVotos = Object.keys(sala.votacaoAtiva.votos).length;
+        if (totalVotos >= sala.jogadores.length) {
+            debugLog('finalizando votacao apos saida', {
+                pin,
+                item: sala.votacaoAtiva.key,
+                totalVotos,
+                totalJogadores: sala.jogadores.length
+            });
+            finalizarVotacaoItem(pin);
+        }
+    }
 }
 
 io.on('connection', (socket) => {
@@ -629,6 +692,14 @@ io.on('connection', (socket) => {
             delete sala.respostasRodada[socket.id];
         }
 
+        debugLog('jogador saiu', {
+            pin,
+            jogador: socket.id,
+            eraHost,
+            fase: sala.fase,
+            jogadoresRestantes: sala.jogadores.map(j => j.id)
+        });
+
         if (sala.jogadores.length === 0) {
             salas.delete(pin);
             return;
@@ -639,6 +710,7 @@ io.on('connection', (socket) => {
             io.to(sala.hostId).emit('voceEhHost');
         }
 
+        reconciliarSalaAposSaida(pin, sala);
         emitirJogadores(pin);
     });
 });

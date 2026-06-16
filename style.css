@@ -392,11 +392,23 @@ button:active { transform: scale(.97); }
   color: rgba(241,245,249,.45);
   border: 1.5px solid rgba(148,163,184,.28);
 }
+.ver-chip-wrapper .resposta-chip.pendente {
+  background: rgba(250,204,21,.18);
+  color: #fde68a;
+  border: 1.5px solid rgba(250,204,21,.35);
+}
 .chip-label-aceito {
   font-size: .7rem;
   font-weight: 900;
   letter-spacing: .2em;
   color: #4ade80;
+  text-transform: uppercase;
+}
+.chip-label-status {
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .18em;
+  color: var(--cor-suave);
   text-transform: uppercase;
 }
 .ver-nav {
