@@ -52,13 +52,17 @@ let categoriasRodada = [];
 let categoriasFila = [];
 let indiceVerificacaoAtual = 0;
 let categoriaTimerInterval = null;
+let hostAtualId = '';
 
 const estadoServidor = {
     leaderboard: [],
     verificacao: null,
     categoriaAtual: null,
     rodadaFinal: null,
-    resultadosValidacao: {}
+    resultadosValidacao: {},
+    fase: 'lobby',
+    aguardandoHost: false,
+    aguardandoConfirmacaoResultados: false
 };
 
 function debugLog(...args) {
@@ -108,6 +112,133 @@ function selecionarCategoriasDaRodada(pool) {
 function mostrarTela(id) {
     document.querySelectorAll('.tela').forEach(tela => tela.classList.remove('ativa'));
     document.getElementById(id)?.classList.add('ativa');
+}
+
+function atualizarIndicadorPapelUI() {
+    const el = document.getElementById('indicador-papel');
+    if (!el) return;
+    el.textContent = souHost ? '👑 Host da Sala' : '👤 Jogador';
+}
+
+function atualizarAcoesHostVerificacaoUI() {
+    const acoes = document.getElementById('ver-host-acoes');
+    const msg = document.getElementById('ver-host-status');
+    const btnEncerrar = document.getElementById('btn-encerrar-categoria');
+    const btnAvancar = document.getElementById('btn-avancar-validacao');
+    const btnConfirmar = document.getElementById('btn-confirmar-resultados');
+
+    if (!acoes || !msg || !btnEncerrar || !btnAvancar || !btnConfirmar) return;
+
+    const emVerificacao = estadoServidor.fase === 'verificacao' || estadoServidor.fase === 'verificacao_aguardando_host';
+    acoes.style.display = (meuPin && souHost && emVerificacao) ? 'flex' : 'none';
+
+    btnEncerrar.style.display = (estadoServidor.fase === 'verificacao') ? 'block' : 'none';
+    btnAvancar.style.display = (estadoServidor.fase === 'verificacao_aguardando_host') ? 'block' : 'none';
+    btnConfirmar.style.display = estadoServidor.aguardandoConfirmacaoResultados ? 'block' : 'none';
+
+    if (!meuPin) {
+        msg.style.display = 'none';
+        return;
+    }
+
+    if (souHost) {
+        if (estadoServidor.aguardandoConfirmacaoResultados) {
+            msg.textContent = 'Confirme os resultados para avançar para a pontuação.';
+            msg.style.display = 'block';
+            return;
+        }
+        if (estadoServidor.fase === 'verificacao_aguardando_host') {
+            msg.textContent = 'Aguardando decisão do host...';
+            msg.style.display = 'block';
+            return;
+        }
+        msg.style.display = 'none';
+        return;
+    }
+
+    if (emVerificacao || estadoServidor.aguardandoConfirmacaoResultados) {
+        msg.textContent = estadoServidor.aguardandoConfirmacaoResultados
+            ? 'Aguardando o host confirmar os resultados...'
+            : 'Aguardando decisão do host...';
+        msg.style.display = 'block';
+    } else {
+        msg.style.display = 'none';
+    }
+}
+
+function atualizarAcoesResultadoUI() {
+    const btnProximo = document.getElementById('btn-proximo');
+    const btnFinalizar = document.getElementById('btn-finalizar-partida');
+    const btnLobby = document.getElementById('btn-retornar-lobby');
+    const aguardando = document.getElementById('resultado-aguardando-host');
+    if (!btnProximo || !btnFinalizar || !btnLobby || !aguardando) return;
+
+    if (!meuPin) {
+        btnProximo.style.display = 'block';
+        btnFinalizar.style.display = 'none';
+        btnLobby.style.display = 'none';
+        aguardando.style.display = 'none';
+        return;
+    }
+
+    const rodadaNoLimite = rodadaAtual >= totalRodadas;
+    const hostPodeAvancar = souHost;
+
+    btnProximo.style.display = hostPodeAvancar && !rodadaNoLimite ? 'block' : 'none';
+    btnFinalizar.style.display = hostPodeAvancar && rodadaNoLimite ? 'block' : 'none';
+    btnLobby.style.display = hostPodeAvancar ? 'block' : 'none';
+    aguardando.style.display = !hostPodeAvancar ? 'block' : 'none';
+}
+
+function atualizarAcoesTelaFinalUI() {
+    const btnReiniciar = document.getElementById('btn-reiniciar');
+    const btnReiniciarHost = document.getElementById('btn-reiniciar-host');
+    const btnLobbyHost = document.getElementById('btn-lobby-host');
+    const aguardando = document.getElementById('final-aguardando-host');
+    if (!btnReiniciar || !btnReiniciarHost || !btnLobbyHost || !aguardando) return;
+
+    if (!meuPin) {
+        btnReiniciar.style.display = 'block';
+        btnReiniciarHost.style.display = 'none';
+        btnLobbyHost.style.display = 'none';
+        aguardando.style.display = 'none';
+        return;
+    }
+
+    btnReiniciar.style.display = 'none';
+    btnReiniciarHost.style.display = souHost ? 'block' : 'none';
+    btnLobbyHost.style.display = souHost ? 'block' : 'none';
+    aguardando.style.display = souHost ? 'none' : 'block';
+}
+
+function encerrarCategoriaHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('finalizarVerificacao', { pin: meuPin });
+}
+
+function avancarValidacaoHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('avancarEtapaValidacao', { pin: meuPin });
+}
+
+function confirmarResultadosHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('confirmarResultados', { pin: meuPin });
+}
+
+function finalizarPartidaHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('finalizarPartida', { pin: meuPin });
+}
+
+function reiniciarPartidaHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('reiniciarPartida', { pin: meuPin });
+}
+
+function retornarLobbyHost() {
+    if (!meuPin || !souHost) return;
+    socket.emit('retornarLobby', { pin: meuPin });
 }
 
 function sacudir(id) {
@@ -170,6 +301,7 @@ function renderLobby(jogadores) {
                     <div class="lobby-avatar" style="background:${cor}">${inicial}</div>
                     <span class="lobby-nome">${escaparHtml(jogador.nome)}${souEu ? ' <em class="lobby-voce">(você)</em>' : ''}</span>
                     ${isHost ? '<span class="lobby-coroa" title="Host">👑</span>' : ''}
+                    <span class="lobby-papel">${isHost ? '👑 Host da Sala' : '👤 Jogador'}</span>
                     <span class="lobby-pts">⭐ ${jogador.pontos || 0}</span>
                 </div>`;
         } else {
@@ -508,10 +640,7 @@ function getClasseDestaque(item, maxVotos) {
 }
 
 function atualizarTimerCategoriaUI() {
-    const el = document.getElementById('ver-btn-avancar');
-    if (!el || !estadoServidor.categoriaAtual?.endsAt) return;
-    const restante = Math.max(0, Math.ceil((estadoServidor.categoriaAtual.endsAt - Date.now()) / 1000));
-    el.textContent = `Tempo: ${restante}s`;
+    return;
 }
 
 function renderCategoriaVerificacao() {
@@ -572,18 +701,13 @@ function renderCategoriaVerificacao() {
     if (avancar) {
         if (!meuPin) {
             avancar.textContent = indiceVerificacaoAtual < total - 1 ? '→' : 'CONFIRMAR';
+            avancar.style.visibility = 'visible';
         } else {
-            avancar.textContent = 'Tempo: --s';
+            avancar.style.visibility = 'hidden';
         }
     }
 
-    if (meuPin) {
-        clearInterval(categoriaTimerInterval);
-        atualizarTimerCategoriaUI();
-        categoriaTimerInterval = setInterval(() => {
-            atualizarTimerCategoriaUI();
-        }, 250);
-    }
+    atualizarAcoesHostVerificacaoUI();
 }
 
 function navVerificacao(delta) {
@@ -737,7 +861,7 @@ function renderResultadoRodada(payload) {
 
 function proximaRodadaOuFim() {
     if (meuPin) {
-        if (souHost) socket.emit('proximaRodada', meuPin);
+        if (souHost) socket.emit('iniciarNovaRodada', { pin: meuPin });
         return;
     }
 
@@ -765,6 +889,8 @@ function mostrarResultadoFinal() {
     if (total) {
         total.innerHTML = ranking.map(jogador => `${escaparHtml(jogador.nome)}: ${jogador.pontos || 0} pts`).join('<br>');
     }
+
+    atualizarAcoesTelaFinalUI();
 
     mostrarTela('tela-final');
 }
@@ -827,9 +953,11 @@ document.addEventListener('DOMContentLoaded', () => {
 socket.on('salaCriada', pin => {
     meuPin = pin;
     souHost = true;
+    hostAtualId = socket.id;
     document.getElementById('lobby-pin').textContent = pin;
     document.getElementById('btn-iniciar-online').style.display = 'block';
     document.getElementById('lobby-aguardando').style.display = 'none';
+    atualizarIndicadorPapelUI();
     renderCategoriasSetup();
     renderLetrasSetup();
     emitirConfigSeModoOnline();
@@ -840,6 +968,7 @@ socket.on('entradaSucesso', pin => {
     meuPin = pin;
     souHost = false;
     document.getElementById('lobby-pin').textContent = pin;
+    atualizarIndicadorPapelUI();
     renderCategoriasSetup();
     renderLetrasSetup();
     mostrarTela('tela-sala');
@@ -851,8 +980,28 @@ socket.on('atualizarJogadores', jogadores => {
 
 socket.on('voceEhHost', () => {
     souHost = true;
+    hostAtualId = socket.id;
     document.getElementById('btn-iniciar-online').style.display = 'block';
     document.getElementById('lobby-aguardando').style.display = 'none';
+    atualizarIndicadorPapelUI();
+    renderCategoriasSetup();
+    renderLetrasSetup();
+    atualizarAcoesHostVerificacaoUI();
+    atualizarAcoesResultadoUI();
+    atualizarAcoesTelaFinalUI();
+});
+
+socket.on('hostAtualizado', ({ hostId }) => {
+    hostAtualId = hostId || '';
+    souHost = Boolean(hostAtualId) && hostAtualId === socket.id;
+    const iniciarBtn = document.getElementById('btn-iniciar-online');
+    const aguardando = document.getElementById('lobby-aguardando');
+    if (iniciarBtn) iniciarBtn.style.display = souHost ? 'block' : 'none';
+    if (aguardando) aguardando.style.display = souHost ? 'none' : 'block';
+    atualizarIndicadorPapelUI();
+    atualizarAcoesHostVerificacaoUI();
+    atualizarAcoesResultadoUI();
+    atualizarAcoesTelaFinalUI();
     renderCategoriasSetup();
     renderLetrasSetup();
 });
@@ -860,10 +1009,14 @@ socket.on('voceEhHost', () => {
 socket.on('jogoIniciado', ({ letra, categorias, rodadaAtual: rodada, totalRodadas: total }) => {
     if (rodada !== undefined) rodadaAtual = rodada - 1;
     if (total !== undefined) totalRodadas = total;
+    estadoServidor.fase = 'jogando';
+    estadoServidor.aguardandoHost = false;
+    estadoServidor.aguardandoConfirmacaoResultados = false;
     iniciarJogo(letra, categorias);
 });
 
 socket.on('jogoFinalizado', () => {
+    estadoServidor.fase = 'finalizada';
     mostrarResultadoFinal();
 });
 
@@ -941,6 +1094,9 @@ socket.on('iniciarVerificacao', payload => {
     estadoServidor.verificacao = payload || null;
     estadoServidor.categoriaAtual = null;
     estadoServidor.resultadosValidacao = {};
+    estadoServidor.fase = 'verificacao';
+    estadoServidor.aguardandoHost = false;
+    estadoServidor.aguardandoConfirmacaoResultados = false;
     indiceVerificacaoAtual = 0;
     clearInterval(categoriaTimerInterval);
     debugLog('iniciarVerificacao', {
@@ -957,6 +1113,7 @@ socket.on('iniciarVerificacao', payload => {
         }))
     });
     renderCategoriaVerificacao();
+    atualizarAcoesHostVerificacaoUI();
     mostrarTela('tela-verificacao');
 });
 
@@ -966,6 +1123,9 @@ socket.on('categoriaVerificacaoIniciada', payload => {
         itens: [...(payload?.itens || [])]
     };
     indiceVerificacaoAtual = payload?.indice || 0;
+    estadoServidor.fase = 'verificacao';
+    estadoServidor.aguardandoHost = false;
+    estadoServidor.aguardandoConfirmacaoResultados = false;
     debugLog('categoriaVerificacaoIniciada', {
         indice: payload?.indice,
         categoria: payload?.categoria,
@@ -973,6 +1133,7 @@ socket.on('categoriaVerificacaoIniciada', payload => {
         totalJogadores: payload?.totalJogadores
     });
     renderCategoriaVerificacao();
+    atualizarAcoesHostVerificacaoUI();
 });
 
 socket.on('votacaoItemAtualizada', ({ itemId, votos, sim, nao, totalJogadores }) => {
@@ -1007,14 +1168,66 @@ socket.on('votacaoItemEncerrada', ({ itemId, sim, nao, aceito }) => {
 socket.on('categoriaVerificacaoEncerrada', ({ categoriaId, indice, totalCategorias }) => {
     debugLog('categoriaVerificacaoEncerrada', { categoriaId, indice, totalCategorias });
     clearInterval(categoriaTimerInterval);
-    const avancar = document.getElementById('ver-btn-avancar');
-    if (avancar) avancar.textContent = 'Aguardando próxima categoria...';
+    estadoServidor.fase = 'verificacao_aguardando_host';
+    estadoServidor.aguardandoHost = true;
+    atualizarAcoesHostVerificacaoUI();
+});
+
+socket.on('categoriaVerificacaoSemItens', () => {
+    estadoServidor.fase = 'verificacao';
+    estadoServidor.aguardandoHost = false;
+    atualizarAcoesHostVerificacaoUI();
+});
+
+socket.on('aguardandoHostProximaCategoria', () => {
+    estadoServidor.fase = 'verificacao_aguardando_host';
+    estadoServidor.aguardandoHost = true;
+    atualizarAcoesHostVerificacaoUI();
+});
+
+socket.on('aguardandoConfirmacaoResultados', () => {
+    estadoServidor.fase = 'verificacao_aguardando_host';
+    estadoServidor.aguardandoConfirmacaoResultados = true;
+    atualizarAcoesHostVerificacaoUI();
 });
 
 socket.on('rodadaFinalizada', payload => {
     clearInterval(categoriaTimerInterval);
     estadoServidor.rodadaFinal = payload || null;
     estadoServidor.leaderboard = payload?.ranking || [];
+    estadoServidor.fase = 'resultado';
+    estadoServidor.aguardandoHost = false;
+    estadoServidor.aguardandoConfirmacaoResultados = false;
     renderResultadoRodada(payload);
+    atualizarAcoesResultadoUI();
     mostrarTela('tela-resultado');
+});
+
+socket.on('partidaReiniciada', () => {
+    rodadaAtual = 0;
+    pontuacaoAcumulada = 0;
+    historicoRodadas = [];
+    letrasUsadas = [];
+    respostasJogo = {};
+    respostasRodadaSala = {};
+    categoriasRodada = [];
+    estadoServidor.fase = 'lobby';
+    mostrarTela('tela-sala');
+    atualizarAcoesResultadoUI();
+    atualizarAcoesTelaFinalUI();
+});
+
+socket.on('retornoLobby', () => {
+    estadoServidor.fase = 'lobby';
+    mostrarTela('tela-sala');
+    atualizarAcoesResultadoUI();
+    atualizarAcoesTelaFinalUI();
+});
+
+socket.on('estadoSalaAtualizado', ({ fase, rodadaAtual: rodada, totalRodadas: total }) => {
+    if (fase) estadoServidor.fase = fase;
+    if (typeof rodada === 'number') rodadaAtual = rodada;
+    if (typeof total === 'number') totalRodadas = total;
+    atualizarAcoesHostVerificacaoUI();
+    atualizarAcoesResultadoUI();
 });

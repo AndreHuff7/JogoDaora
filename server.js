@@ -15,7 +15,6 @@ const DEBUG_STOP = process.env.DEBUG_STOP === '1';
 app.use(express.static(path.join(__dirname)));
 
 const salas = new Map();
-const TEMPO_VOTACAO_MS = 20000;
 const GRACE_WINDOW_MS  = 1500;
 
 function debugLog(...args) {
@@ -65,6 +64,7 @@ function criarEstadoSala(pin, hostId, hostNome) {
         resultadosValidacao: {},
         votacaoAtiva: null,
         verificacaoCategoria: null,
+        verificacaoCategoriaIndiceAtual: null,
         votacoesCategoria: {},
         fase: 'lobby',
         config: {
@@ -78,6 +78,42 @@ function criarEstadoSala(pin, hostId, hostNome) {
     return sala;
 }
 
+function resetarEstadoPartida(sala, { limparPontuacao = false } = {}) {
+    if (!sala) return;
+
+    if (sala._stopTimer) {
+        clearTimeout(sala._stopTimer);
+        sala._stopTimer = null;
+    }
+    if (sala.verificacaoCategoria?.timer) {
+        clearTimeout(sala.verificacaoCategoria.timer);
+    }
+
+    sala.fase = 'lobby';
+    sala.rodadaAtual = 0;
+    sala.letraAtual = '';
+    sala.respostasRodada = {};
+    sala.votos = {};
+    sala.historicoRodadas = [];
+    sala.categoriasFila = [];
+    sala.categoriasRodada = [];
+    sala.itensVerificacao = [];
+    sala.filaValidacao = [];
+    sala.resultadosValidacao = {};
+    sala.votacaoAtiva = null;
+    sala.verificacaoCategoria = null;
+    sala.verificacaoCategoriaIndiceAtual = null;
+    sala.votacoesCategoria = {};
+
+    if (limparPontuacao) {
+        const novaPontuacao = {};
+        sala.jogadores.forEach(j => {
+            novaPontuacao[j.id] = 0;
+        });
+        sala.pontuacoes = novaPontuacao;
+    }
+}
+
 function emitirJogadores(pin) {
     const sala = salas.get(pin);
     if (!sala) return;
@@ -89,6 +125,16 @@ function emitirJogadores(pin) {
         }))
         .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome, 'pt-BR'));
     io.to(pin).emit('atualizarJogadores', jogadores);
+}
+
+function emitirHostAtualizado(pin) {
+    const sala = salas.get(pin);
+    if (!sala) return;
+    const host = sala.jogadores.find(j => j.id === sala.hostId);
+    io.to(pin).emit('hostAtualizado', {
+        hostId: sala.hostId,
+        hostNome: host?.nome || ''
+    });
 }
 
 function obterSala(pin) {
@@ -205,8 +251,10 @@ function todasVotacoesCategoriaEncerradas(sala) {
 }
 
 function irParaProximaCategoriaVerificacao(pin, sala) {
-    if (!sala || !sala.verificacaoCategoria) return;
-    const proximoIndice = sala.verificacaoCategoria.indice + 1;
+    if (!sala) return;
+    const proximoIndice = Number.isInteger(sala.verificacaoCategoriaIndiceAtual)
+        ? sala.verificacaoCategoriaIndiceAtual + 1
+        : 0;
     iniciarCategoriaVerificacao(pin, sala, proximoIndice);
 }
 
@@ -231,14 +279,29 @@ function encerrarCategoriaVerificacao(pin, sala) {
     });
 
     sala.verificacaoCategoria = null;
+    sala.verificacaoCategoriaIndiceAtual = categoriaAtual.indice;
     sala.votacoesCategoria = {};
 
     if (categoriaAtual.indice >= sala.categoriasRodada.length - 1) {
-        calcularPontuacaoRodada(pin);
+        sala.fase = 'aguardando_confirmacao_resultados';
+        io.to(pin).emit('aguardandoConfirmacaoResultados', {
+            rodadaAtual: sala.rodadaAtual,
+            totalRodadas: sala.config.rodadas,
+            hostId: sala.hostId
+        });
+        broadcastEstadoSala(pin);
         return;
     }
 
-    setTimeout(() => irParaProximaCategoriaVerificacao(pin, sala), 600);
+    sala.fase = 'verificacao_aguardando_host';
+    io.to(pin).emit('aguardandoHostProximaCategoria', {
+        rodadaAtual: sala.rodadaAtual,
+        indiceFinalizado: categoriaAtual.indice,
+        proximoIndice: categoriaAtual.indice + 1,
+        totalCategorias: sala.categoriasRodada.length,
+        hostId: sala.hostId
+    });
+    broadcastEstadoSala(pin);
 }
 
 function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
@@ -251,8 +314,6 @@ function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
     }
 
     const itensCategoria = obterItensCategoriaValidacao(sala, categoria.id);
-    const endsAt = Date.now() + TEMPO_VOTACAO_MS;
-
     sala.votacoesCategoria = {};
     itensCategoria.forEach(item => {
         sala.votacoesCategoria[item.key] = {
@@ -265,21 +326,14 @@ function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
         };
     });
 
-    const timer = setTimeout(() => {
-        const atual = salas.get(pin);
-        if (!atual) return;
-        if (!atual.verificacaoCategoria) return;
-        if (atual.verificacaoCategoria.indice !== indiceCategoria) return;
-        encerrarCategoriaVerificacao(pin, atual);
-    }, TEMPO_VOTACAO_MS);
-
     sala.verificacaoCategoria = {
         indice: indiceCategoria,
         categoria,
         startedAt: Date.now(),
-        endsAt,
-        timer
+        endsAt: null,
+        timer: null
     };
+    sala.verificacaoCategoriaIndiceAtual = indiceCategoria;
 
     debugLog('categoria verificacao iniciada', {
         pin,
@@ -293,9 +347,9 @@ function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
         indice: indiceCategoria,
         totalCategorias: sala.categoriasRodada.length,
         categoria,
-        duracao: Math.floor(TEMPO_VOTACAO_MS / 1000),
+        duracao: null,
         startedAt: sala.verificacaoCategoria.startedAt,
-        endsAt,
+        endsAt: null,
         totalJogadores: sala.jogadores.length,
         itens: itensCategoria.map(item => ({
             key: item.key,
@@ -314,7 +368,11 @@ function iniciarCategoriaVerificacao(pin, sala, indiceCategoria) {
     });
 
     if (itensCategoria.length === 0) {
-        encerrarCategoriaVerificacao(pin, sala);
+        io.to(pin).emit('categoriaVerificacaoSemItens', {
+            categoriaId: categoria.id,
+            indice: indiceCategoria,
+            totalCategorias: sala.categoriasRodada.length
+        });
     }
 }
 
@@ -514,6 +572,7 @@ function iniciarRodadaInterna(pin, sala) {
     sala.filaValidacao = [];
     sala.votacaoAtiva = null;
     sala.verificacaoCategoria = null;
+    sala.verificacaoCategoriaIndiceAtual = null;
     sala.votacoesCategoria = {};
     sala.rodadaAtual = (sala.rodadaAtual || 0) + 1;
 
@@ -559,10 +618,29 @@ function iniciarVerificacaoRodada(pin, sala) {
         ranking: obterRankingSala(sala)
     });
     if (sala.itensVerificacao.length === 0) {
-        calcularPontuacaoRodada(pin);
+        sala.fase = 'aguardando_confirmacao_resultados';
+        io.to(pin).emit('aguardandoConfirmacaoResultados', {
+            rodadaAtual: sala.rodadaAtual,
+            totalRodadas: sala.config.rodadas,
+            hostId: sala.hostId
+        });
+        broadcastEstadoSala(pin);
         return;
     }
     iniciarCategoriaVerificacao(pin, sala, 0);
+}
+
+function avancarPosResultado(pin, sala) {
+    if (!sala) return;
+    if (sala.fase !== 'resultado') return;
+
+    const totalRodadas = sala.config.rodadas || 8;
+    if (sala.rodadaAtual >= totalRodadas) {
+        return;
+    }
+
+    iniciarRodadaInterna(pin, sala);
+    broadcastEstadoSala(pin);
 }
 
 function reconciliarSalaAposSaida(pin, sala) {
@@ -596,9 +674,7 @@ function reconciliarSalaAposSaida(pin, sala) {
             }
         });
 
-        if (todasVotacoesCategoriaEncerradas(sala)) {
-            encerrarCategoriaVerificacao(pin, sala);
-        }
+        // A progressao da verificacao eh controlada pelo host.
     }
 }
 
@@ -614,6 +690,7 @@ io.on('connection', (socket) => {
 
         socket.emit('salaCriada', pin);
         emitirJogadores(pin);
+        emitirHostAtualizado(pin);
     });
 
     socket.on('entrarSala', ({ pin, nome }) => {
@@ -637,6 +714,7 @@ io.on('connection', (socket) => {
         socket.emit('entradaSucesso', pin);
         socket.emit('configAtualizada', sala.config);
         emitirJogadores(pin);
+        emitirHostAtualizado(pin);
     });
 
     socket.on('atualizarConfig', ({ pin, categorias, letras, rodadas }) => {
@@ -682,14 +760,16 @@ io.on('connection', (socket) => {
         if (!sala) return;
         if (sala.hostId !== socket.id) return;
 
-        const totalRodadas = sala.config.rodadas || 8;
-        if (sala.rodadaAtual >= totalRodadas) {
-            sala.fase = 'finalizada';
-            io.to(pin).emit('jogoFinalizado');
-        } else {
-            iniciarRodadaInterna(pin, sala);
-            broadcastEstadoSala(pin);
-        }
+        avancarPosResultado(pin, sala);
+    });
+
+    socket.on('iniciarNovaRodada', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+
+        avancarPosResultado(pin, sala);
     });
 
     socket.on('votarPalavra', ({ pin, itemId, catId, chave, aceito }) => {
@@ -725,9 +805,7 @@ io.on('connection', (socket) => {
             finalizarItemVotacaoCategoria(pin, sala, itemIdResolvido);
         }
 
-        if (todasVotacoesCategoriaEncerradas(sala)) {
-            encerrarCategoriaVerificacao(pin, sala);
-        }
+        // Encerramento de categoria/verificacao eh responsabilidade do host.
     });
 
     socket.on('finalizarVerificacao', ({ pin }) => {
@@ -736,7 +814,90 @@ io.on('connection', (socket) => {
         if (!sala) return;
         if (sala.hostId !== socket.id) return;
         if (sala.fase !== 'verificacao') return;
+        if (!sala.verificacaoCategoria) return;
+
         encerrarCategoriaVerificacao(pin, sala);
+    });
+
+    socket.on('avancarEtapaValidacao', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+        if (sala.fase !== 'verificacao_aguardando_host') return;
+
+        const atual = Number.isInteger(sala.verificacaoCategoriaIndiceAtual)
+            ? sala.verificacaoCategoriaIndiceAtual
+            : -1;
+        const proximoIndice = atual + 1;
+
+        if (proximoIndice >= sala.categoriasRodada.length) {
+            sala.fase = 'aguardando_confirmacao_resultados';
+            io.to(pin).emit('aguardandoConfirmacaoResultados', {
+                rodadaAtual: sala.rodadaAtual,
+                totalRodadas: sala.config.rodadas,
+                hostId: sala.hostId
+            });
+            broadcastEstadoSala(pin);
+            return;
+        }
+
+        sala.fase = 'verificacao';
+        iniciarCategoriaVerificacao(pin, sala, proximoIndice);
+    });
+
+    socket.on('confirmarResultados', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+        if (sala.fase !== 'aguardando_confirmacao_resultados') return;
+
+        calcularPontuacaoRodada(pin);
+        broadcastEstadoSala(pin);
+    });
+
+    socket.on('finalizarPartida', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+        if (sala.fase !== 'resultado') return;
+
+        const totalRodadas = sala.config.rodadas || 8;
+        if (sala.rodadaAtual < totalRodadas) return;
+
+        sala.fase = 'finalizada';
+        const ranking = obterRankingSala(sala);
+        io.to(pin).emit('jogoFinalizado', {
+            ranking,
+            historicoRodadas: sala.historicoRodadas
+        });
+        broadcastEstadoSala(pin);
+    });
+
+    socket.on('reiniciarPartida', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+
+        resetarEstadoPartida(sala, { limparPontuacao: true });
+        emitirJogadores(pin);
+        io.to(pin).emit('partidaReiniciada');
+        broadcastEstadoSala(pin);
+    });
+
+    socket.on('retornarLobby', ({ pin }) => {
+        if (!pin || typeof pin !== 'string') return;
+        const sala = salas.get(pin);
+        if (!sala) return;
+        if (sala.hostId !== socket.id) return;
+
+        resetarEstadoPartida(sala, { limparPontuacao: false });
+        emitirJogadores(pin);
+        io.to(pin).emit('retornoLobby');
+        broadcastEstadoSala(pin);
     });
 
     socket.on('chatMsg', ({ pin, nome, msg }) => {
@@ -787,6 +948,8 @@ io.on('connection', (socket) => {
 
         reconciliarSalaAposSaida(pin, sala);
         emitirJogadores(pin);
+        emitirHostAtualizado(pin);
+        broadcastEstadoSala(pin);
     });
 });
 

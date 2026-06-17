@@ -9,15 +9,12 @@
 <body>
   <header>
     <h1>STOP!</h1>
-    <p class="subtitulo">Adedanha · Adedonha</p>
   </header>
 
   <main>
-    <!-- Tela de entrada: nome + criar/entrar sala -->
     <div id="tela-nome" class="tela ativa">
       <div class="card-intro">
         <h2 class="titulo-lobby">Stop! Multiplayer</h2>
-        <p class="subtitulo-lobby">Jogue com seus amigos em tempo real</p>
 
         <div class="campo-form">
           <label for="input-nome">Seu nome</label>
@@ -52,6 +49,8 @@
           <span class="lobby-pin-hint">Compartilhe com seus amigos</span>
         </div>
       </div>
+
+      <div id="indicador-papel" class="papel-indicador">👤 Jogador</div>
 
       <!-- Body: config (esq) + jogadores/chat (dir) -->
       <div class="lobby-body">
@@ -157,10 +156,16 @@
     <div id="tela-verificacao" class="tela">
       <div class="ver-progresso">VALIDAR AS RESPOSTAS <span id="ver-progresso-idx">1</span>/<span id="ver-progresso-total">1</span></div>
       <div class="ver-categoria-nome" id="ver-categoria-nome"></div>
+      <p id="ver-host-status" class="host-status-msg" style="display:none"></p>
       <div id="ver-chips-container"></div>
       <div class="ver-nav">
         <button class="ver-btn-nav ver-btn-prev" id="ver-btn-prev" onclick="navVerificacao(-1)">←</button>
         <button class="ver-btn-nav ver-btn-avancar" id="ver-btn-avancar" onclick="navVerificacao(1)">→</button>
+      </div>
+      <div class="ver-host-acoes" id="ver-host-acoes" style="display:none">
+        <button id="btn-encerrar-categoria" onclick="encerrarCategoriaHost()">Encerrar validação da categoria</button>
+        <button id="btn-avancar-validacao" onclick="avancarValidacaoHost()" style="display:none">Próxima etapa da validação</button>
+        <button id="btn-confirmar-resultados" onclick="confirmarResultadosHost()" style="display:none">Confirmar resultados</button>
       </div>
       <div id="painel-votacao" style="display:none"></div>
     </div>
@@ -173,7 +178,10 @@
       <ul id="resultado-lista"></ul>
       <div id="pontuacao-total"></div>
       <div id="info-rodada" class="info-rodada"></div>
+      <p id="resultado-aguardando-host" class="host-status-msg" style="display:none">Aguardando o host iniciar a próxima rodada...</p>
       <button id="btn-proximo" onclick="proximaRodadaOuFim()">→ Próxima Rodada</button>
+      <button id="btn-finalizar-partida" onclick="finalizarPartidaHost()" style="display:none">🏁 Finalizar Partida</button>
+      <button id="btn-retornar-lobby" onclick="retornarLobbyHost()" style="display:none">↩ Retornar ao Lobby</button>
     </div>
 
     <!-- Tela de resultado final -->
@@ -181,7 +189,10 @@
       <h2>🏆 Resultado Final</h2>
       <ul id="final-historico" class="final-historico"></ul>
       <div id="final-total" class="final-total"></div>
-      <button onclick="reiniciar()">🔄 Jogar Novamente</button>
+      <p id="final-aguardando-host" class="host-status-msg" style="display:none">Aguardando decisão do host...</p>
+      <button id="btn-reiniciar" onclick="reiniciar()">🔄 Jogar Novamente</button>
+      <button id="btn-reiniciar-host" onclick="reiniciarPartidaHost()" style="display:none">🔄 Reiniciar Partida</button>
+      <button id="btn-lobby-host" onclick="retornarLobbyHost()" style="display:none">↩ Retornar ao Lobby</button>
     </div>
   </main>
   <script src="/socket.io/socket.io.js"></script>

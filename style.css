@@ -67,6 +67,35 @@ header h1 {
   margin-top: .3rem;
 }
 
+.papel-indicador {
+  margin: .9rem 0 0;
+  text-align: center;
+  font-size: .92rem;
+  font-weight: 700;
+  color: var(--cor-destaque2);
+  letter-spacing: .06em;
+}
+
+.host-status-msg {
+  margin: 1rem 0;
+  text-align: center;
+  color: var(--cor-suave);
+  font-size: .95rem;
+}
+
+.ver-host-acoes {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  margin-top: 1rem;
+}
+
+.lobby-papel {
+  font-size: .74rem;
+  color: var(--cor-suave);
+  letter-spacing: .04em;
+}
+
 /* ── Main / telas ────────────────────────────── */
 main {
   flex: 1;
