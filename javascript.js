@@ -129,12 +129,15 @@ function atualizarAcoesHostVerificacaoUI() {
 
     if (!acoes || !msg || !btnEncerrar || !btnAvancar || !btnConfirmar) return;
 
-    const emVerificacao = estadoServidor.fase === 'verificacao' || estadoServidor.fase === 'verificacao_aguardando_host';
-    acoes.style.display = (meuPin && souHost && emVerificacao) ? 'flex' : 'none';
+    const emFluxoValidacao = estadoServidor.fase === 'verificacao'
+        || estadoServidor.fase === 'verificacao_aguardando_host'
+        || estadoServidor.fase === 'aguardando_confirmacao_resultados';
+    acoes.style.display = (meuPin && souHost && emFluxoValidacao) ? 'flex' : 'none';
 
     btnEncerrar.style.display = (estadoServidor.fase === 'verificacao') ? 'block' : 'none';
     btnAvancar.style.display = (estadoServidor.fase === 'verificacao_aguardando_host') ? 'block' : 'none';
-    btnConfirmar.style.display = estadoServidor.aguardandoConfirmacaoResultados ? 'block' : 'none';
+    btnConfirmar.style.display = (estadoServidor.aguardandoConfirmacaoResultados
+        || estadoServidor.fase === 'aguardando_confirmacao_resultados') ? 'block' : 'none';
 
     if (!meuPin) {
         msg.style.display = 'none';
@@ -156,7 +159,7 @@ function atualizarAcoesHostVerificacaoUI() {
         return;
     }
 
-    if (emVerificacao || estadoServidor.aguardandoConfirmacaoResultados) {
+    if (emFluxoValidacao || estadoServidor.aguardandoConfirmacaoResultados) {
         msg.textContent = estadoServidor.aguardandoConfirmacaoResultados
             ? 'Aguardando o host confirmar os resultados...'
             : 'Aguardando decisão do host...';
@@ -861,7 +864,19 @@ function renderResultadoRodada(payload) {
 
 function proximaRodadaOuFim() {
     if (meuPin) {
-        if (souHost) socket.emit('iniciarNovaRodada', { pin: meuPin });
+        console.log('[HOST] Proxima rodada clicada', {
+            meuPin,
+            souHost,
+            faseCliente: estadoServidor.fase,
+            rodadaAtual,
+            totalRodadas
+        });
+        if (souHost) {
+            socket.emit('iniciarNovaRodada', { pin: meuPin });
+            console.log('[HOST] Evento iniciarNovaRodada emitido', { pin: meuPin });
+        } else {
+            console.log('[HOST] Clique ignorado: usuario nao eh host');
+        }
         return;
     }
 
@@ -1007,6 +1022,12 @@ socket.on('hostAtualizado', ({ hostId }) => {
 });
 
 socket.on('jogoIniciado', ({ letra, categorias, rodadaAtual: rodada, totalRodadas: total }) => {
+    console.log('[CLIENT] jogoIniciado recebido', {
+        letra,
+        totalCategorias: Array.isArray(categorias) ? categorias.length : 0,
+        rodadaServidor: rodada,
+        totalRodadasServidor: total
+    });
     if (rodada !== undefined) rodadaAtual = rodada - 1;
     if (total !== undefined) totalRodadas = total;
     estadoServidor.fase = 'jogando';
@@ -1186,12 +1207,18 @@ socket.on('aguardandoHostProximaCategoria', () => {
 });
 
 socket.on('aguardandoConfirmacaoResultados', () => {
-    estadoServidor.fase = 'verificacao_aguardando_host';
+    console.log('[CLIENT] aguardandoConfirmacaoResultados recebido');
+    estadoServidor.fase = 'aguardando_confirmacao_resultados';
     estadoServidor.aguardandoConfirmacaoResultados = true;
     atualizarAcoesHostVerificacaoUI();
 });
 
 socket.on('rodadaFinalizada', payload => {
+    console.log('[CLIENT] rodadaFinalizada recebida', {
+        rodadaAtual: payload?.rodadaAtual,
+        totalRodadas: payload?.totalRodadas,
+        letraAtual: payload?.letraAtual
+    });
     clearInterval(categoriaTimerInterval);
     estadoServidor.rodadaFinal = payload || null;
     estadoServidor.leaderboard = payload?.ranking || [];
@@ -1225,6 +1252,11 @@ socket.on('retornoLobby', () => {
 });
 
 socket.on('estadoSalaAtualizado', ({ fase, rodadaAtual: rodada, totalRodadas: total }) => {
+    console.log('[CLIENT] estadoSalaAtualizado', {
+        fase,
+        rodadaAtual: rodada,
+        totalRodadas: total
+    });
     if (fase) estadoServidor.fase = fase;
     if (typeof rodada === 'number') rodadaAtual = rodada;
     if (typeof total === 'number') totalRodadas = total;

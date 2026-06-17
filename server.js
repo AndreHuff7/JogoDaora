@@ -562,6 +562,14 @@ function finalizarFaseParando(pin) {
 }
 
 function iniciarRodadaInterna(pin, sala) {
+    console.log('[SERVER] Iniciando rodada', {
+        pin,
+        faseAnterior: sala.fase,
+        rodadaAnterior: sala.rodadaAtual,
+        totalRodadas: sala.config.rodadas,
+        jogadores: sala.jogadores.length
+    });
+
     if (sala._stopTimer) {
         clearTimeout(sala._stopTimer);
         sala._stopTimer = null;
@@ -587,6 +595,14 @@ function iniciarRodadaInterna(pin, sala) {
         rodadaAtual: sala.rodadaAtual,
         totalRodadas: sala.config.rodadas,
         ranking: obterRankingSala(sala)
+    });
+
+    console.log('[SERVER] jogoIniciado enviado', {
+        pin,
+        faseAtual: sala.fase,
+        rodadaAtual: sala.rodadaAtual,
+        letra: sala.letraAtual,
+        totalCategorias: sala.categoriasRodada.length
     });
 }
 
@@ -631,11 +647,33 @@ function iniciarVerificacaoRodada(pin, sala) {
 }
 
 function avancarPosResultado(pin, sala) {
-    if (!sala) return;
-    if (sala.fase !== 'resultado') return;
+    console.log('[SERVER] avancarPosResultado chamado', {
+        pin,
+        fase: sala?.fase,
+        rodadaAtual: sala?.rodadaAtual,
+        totalRodadas: sala?.config?.rodadas
+    });
+
+    if (!sala) {
+        console.log('[SERVER][BLOCK] Sala inexistente em avancarPosResultado', { pin });
+        return;
+    }
+    if (sala.fase !== 'resultado') {
+        console.log('[SERVER][BLOCK] Fase invalida para avancar rodada', {
+            pin,
+            faseAtual: sala.fase,
+            faseEsperada: 'resultado'
+        });
+        return;
+    }
 
     const totalRodadas = sala.config.rodadas || 8;
     if (sala.rodadaAtual >= totalRodadas) {
+        console.log('[SERVER][BLOCK] Rodadas esgotadas, nao avanca', {
+            pin,
+            rodadaAtual: sala.rodadaAtual,
+            totalRodadas
+        });
         return;
     }
 
@@ -755,19 +793,67 @@ io.on('connection', (socket) => {
     });
 
     socket.on('proximaRodada', (pin) => {
-        if (typeof pin !== 'string') return;
+        console.log('[SERVER] Evento proximaRodada recebido', {
+            pin,
+            socketId: socket.id
+        });
+        if (typeof pin !== 'string') {
+            console.log('[SERVER][BLOCK] proximaRodada com pin invalido', { pin });
+            return;
+        }
         const sala = salas.get(pin);
-        if (!sala) return;
-        if (sala.hostId !== socket.id) return;
+        if (!sala) {
+            console.log('[SERVER][BLOCK] Sala nao encontrada em proximaRodada', { pin });
+            return;
+        }
+        if (sala.hostId !== socket.id) {
+            console.log('[SERVER][BLOCK] Host invalido em proximaRodada', {
+                pin,
+                hostId: sala.hostId,
+                socketId: socket.id
+            });
+            return;
+        }
+
+        console.log('[SERVER] Host validado em proximaRodada', {
+            pin,
+            hostId: sala.hostId,
+            fase: sala.fase,
+            rodadaAtual: sala.rodadaAtual
+        });
 
         avancarPosResultado(pin, sala);
     });
 
     socket.on('iniciarNovaRodada', ({ pin }) => {
-        if (!pin || typeof pin !== 'string') return;
+        console.log('[SERVER] Evento iniciarNovaRodada recebido', {
+            pin,
+            socketId: socket.id
+        });
+        if (!pin || typeof pin !== 'string') {
+            console.log('[SERVER][BLOCK] iniciarNovaRodada com pin invalido', { pin });
+            return;
+        }
         const sala = salas.get(pin);
-        if (!sala) return;
-        if (sala.hostId !== socket.id) return;
+        if (!sala) {
+            console.log('[SERVER][BLOCK] Sala nao encontrada em iniciarNovaRodada', { pin });
+            return;
+        }
+        if (sala.hostId !== socket.id) {
+            console.log('[SERVER][BLOCK] Host invalido em iniciarNovaRodada', {
+                pin,
+                hostId: sala.hostId,
+                socketId: socket.id
+            });
+            return;
+        }
+
+        console.log('[SERVER] Host validado em iniciarNovaRodada', {
+            pin,
+            hostId: sala.hostId,
+            fase: sala.fase,
+            rodadaAtual: sala.rodadaAtual
+        });
 
         avancarPosResultado(pin, sala);
     });
@@ -847,11 +933,41 @@ io.on('connection', (socket) => {
     });
 
     socket.on('confirmarResultados', ({ pin }) => {
-        if (!pin || typeof pin !== 'string') return;
+        console.log('[SERVER] Evento confirmarResultados recebido', {
+            pin,
+            socketId: socket.id
+        });
+        if (!pin || typeof pin !== 'string') {
+            console.log('[SERVER][BLOCK] confirmarResultados com pin invalido', { pin });
+            return;
+        }
         const sala = salas.get(pin);
-        if (!sala) return;
-        if (sala.hostId !== socket.id) return;
-        if (sala.fase !== 'aguardando_confirmacao_resultados') return;
+        if (!sala) {
+            console.log('[SERVER][BLOCK] Sala nao encontrada em confirmarResultados', { pin });
+            return;
+        }
+        if (sala.hostId !== socket.id) {
+            console.log('[SERVER][BLOCK] Host invalido em confirmarResultados', {
+                pin,
+                hostId: sala.hostId,
+                socketId: socket.id
+            });
+            return;
+        }
+        if (sala.fase !== 'aguardando_confirmacao_resultados') {
+            console.log('[SERVER][BLOCK] Fase invalida em confirmarResultados', {
+                pin,
+                faseAtual: sala.fase,
+                faseEsperada: 'aguardando_confirmacao_resultados'
+            });
+            return;
+        }
+
+        console.log('[SERVER] Host validado em confirmarResultados', {
+            pin,
+            fase: sala.fase,
+            rodadaAtual: sala.rodadaAtual
+        });
 
         calcularPontuacaoRodada(pin);
         broadcastEstadoSala(pin);
